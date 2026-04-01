@@ -1,0 +1,5 @@
+.env
+*.db
+*.webm
+__pycache__/
+venv/
