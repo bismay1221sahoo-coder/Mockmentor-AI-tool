@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import jsPDF from "jspdf";
 
 const BASE = "http://localhost:8000";
 
@@ -38,6 +39,41 @@ export default function HistoryPage({ token, onBack, onLogout }) {
     setLoading(false);
   };
 
+  const exportPDF = (s) => {
+    const doc = new jsPDF();
+    const w = doc.internal.pageSize.getWidth();
+    let y = 20;
+    const line = (text, size = 11, color = [180, 180, 200], bold = false) => {
+      doc.setFontSize(size);
+      doc.setTextColor(...color);
+      doc.setFont("helvetica", bold ? "bold" : "normal");
+      const lines = doc.splitTextToSize(text, w - 40);
+      lines.forEach(l => {
+        if (y > 270) { doc.addPage(); y = 20; }
+        doc.text(l, 20, y);
+        y += size * 0.5 + 2;
+      });
+      y += 2;
+    };
+    doc.setFillColor(10, 10, 30);
+    doc.rect(0, 0, w, 297, "F");
+    line("MockMentor AI — Interview Report", 18, [100, 220, 150], true);
+    line(`Date: ${s.date}`, 11, [120, 120, 180]);
+    y += 4;
+    line("SCORES", 10, [100, 100, 160], true);
+    line(`Score: ${s.score}/100   Grade: ${s.grade}   Eye Contact: ${parseFloat(s.eye_contact).toFixed(1)}%   WPM: ${parseFloat(s.wpm).toFixed(1)}   Fillers: ${s.filler_count}`, 11, [200, 200, 230]);
+    y += 4;
+    line("QUESTION", 10, [100, 100, 160], true);
+    line(s.question || "-", 11, [200, 200, 230]);
+    y += 4;
+    line("YOUR ANSWER", 10, [100, 100, 160], true);
+    line(s.transcript || "No transcript", 11, [180, 180, 210]);
+    y += 4;
+    line("OVERALL FEEDBACK", 10, [100, 200, 150], true);
+    line(s.overall_feedback || "-", 11, [180, 210, 190]);
+    doc.save(`MockMentor_${String(s.date || "session").replace(/ /g, "_")}.pdf`);
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#050508", fontFamily: "'Inter',sans-serif", color: "#f0f0ff" }}>
 
@@ -67,9 +103,17 @@ export default function HistoryPage({ token, onBack, onLogout }) {
           {/* Session Detail */}
           {selected ? (
             <motion.div key="detail" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.35 }}>
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 11, color: "#6b6b8a", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, marginBottom: 6 }}>Session Detail</div>
-                <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.5px" }}>{selected.date}</h2>
+              <div style={{ marginBottom: 28, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#6b6b8a", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600, marginBottom: 6 }}>Session Detail</div>
+                  <h2 style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.5px", margin: 0 }}>{selected.date}</h2>
+                </div>
+                <motion.button
+                  onClick={() => exportPDF(selected)}
+                  style={{ background: "linear-gradient(135deg,#7c3aed,#06b6d4)", border: "none", borderRadius: 12, padding: "10px 20px", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                  whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
+                  📥 Export PDF
+                </motion.button>
               </div>
 
               <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
