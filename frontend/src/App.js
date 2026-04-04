@@ -109,6 +109,7 @@ function App() {
   const [eyeScore, setEyeScore] = useState(0);
   const [totalFrames, setTotalFrames] = useState(0);
   const [fillerCount, setFillerCount] = useState(0);
+  const [fillerBreakdown, setFillerBreakdown] = useState({});
   const [wordCount, setWordCount] = useState(0);
   const [startTime, setStartTime] = useState(null);
   const [question, setQuestion] = useState("");
@@ -338,6 +339,7 @@ function App() {
     setFaceStatus("Detecting...");
     setWordCount(0);
     setFillerCount(0);
+    setFillerBreakdown({});
     setEyeScore(0);
     setTotalFrames(0);
     setFullTranscript("");
@@ -367,8 +369,17 @@ function App() {
       setWordCount(words.length);
       const fillers = ["um", "uh", "like", "you know", "basically"];
       let count = 0;
-      fillers.forEach((f) => { if (newText.toLowerCase().includes(f)) count++; });
+      const breakdown = {};
+      fillers.forEach((f) => {
+        const matches = (newText.toLowerCase().match(new RegExp(f, 'g')) || []).length;
+        if (matches > 0) { count += matches; breakdown[f] = matches; }
+      });
       setFillerCount(count);
+      setFillerBreakdown(prev => {
+        const updated = { ...prev };
+        Object.keys(breakdown).forEach(k => { updated[k] = (updated[k] || 0) + breakdown[k]; });
+        return updated;
+      });
     };
 
     ws.onerror = (e) => console.error("WS error:", e);
@@ -425,8 +436,7 @@ function App() {
       setScorecard(data);
       fetchSessions();
       // fetch follow-up question
-      setFollowupTranscript(fullTranscriptRef.current);
-      setFollowupLoading(true);
+            setFollowupLoading(true);
       setFollowupQuestion("");
       setFollowupMode(false);
       fetch("http://localhost:8000/followup", {
@@ -454,10 +464,10 @@ function App() {
   const confidenceMeter = Math.min(100, Math.max(0, (parseFloat(eyeContactPct) || 0) * 0.75 + (100 - Math.min(parseFloat(wpm) || 0, 160)) * 0.25));
 
   const metricData = [
-    { label: "Eye Contact", value: Math.round(parseFloat(eyeContactPct) || 0), color: "#4CAF50", icon: "👁️" },
-    { label: "WPM", value: Math.min(100, Math.round((parseFloat(wpm) || 0) / 1.6)), color: "#2196F3", icon: "💬" },
-    { label: "Filler", value: Math.min(100, fillerCount * 10), color: "#FF9800", icon: "⚠️" },
-    { label: "Fluency", value: Math.min(100, Math.round((wordCount / (selectedDuration || 1)) * 12)), color: "#9C27B0", icon: "📝" },
+    { label: "Eye Contact", value: Math.round(parseFloat(eyeContactPct) || 0), color: "#4CAF50", icon: "???" },
+    { label: "WPM", value: Math.min(100, Math.round((parseFloat(wpm) || 0) / 1.6)), color: "#2196F3", icon: "??" },
+    { label: "Filler", value: Math.min(100, fillerCount * 10), color: "#FF9800", icon: "??" },
+    { label: "Fluency", value: Math.min(100, Math.round((wordCount / (selectedDuration || 1)) * 12)), color: "#9C27B0", icon: "??" },
   ];
 
   const ScoreTrendTooltip = ({ active, payload, label }) => {
@@ -551,14 +561,14 @@ function App() {
         <span style={{ marginLeft: "auto", fontSize: 12, color: t.subtext, fontWeight: 500, letterSpacing: 0.5 }}>Interview Preparation Platform</span>
         {streak > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 5, background: "linear-gradient(135deg,rgba(255,152,0,0.15),rgba(255,87,34,0.15))", border: "1px solid rgba(255,152,0,0.3)", borderRadius: 20, padding: "5px 14px" }}>
-            <span style={{ fontSize: 15 }}>🔥</span>
+            <span style={{ fontSize: 15 }}>??</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: "#FF9800" }}>{streak} day streak</span>
           </div>
         )}
         <button onClick={() => setDarkMode(!darkMode)} style={{ marginLeft: 12, background: darkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", border: `1px solid ${t.cardBorder}`, borderRadius: 20, padding: "6px 16px", cursor: "pointer", fontSize: 13, color: t.text, fontWeight: 500 }}>
-          {darkMode ? "☀️ Light" : "🌙 Dark"}
+          {darkMode ? "?? Light" : "?? Dark"}
         </button>
-        {user && <span style={{ fontSize: 13, color: t.subtext, marginLeft: 8 }}>👤 {user.name}</span>}
+        {user && <span style={{ fontSize: 13, color: t.subtext, marginLeft: 8 }}>?? {user.name}</span>}
         <button onClick={handleLogout} style={{ marginLeft: 8, background: "rgba(244,67,54,0.15)", border: "1px solid rgba(244,67,54,0.4)", borderRadius: 20, padding: "6px 16px", cursor: "pointer", fontSize: 13, color: "#f44336", fontWeight: 500 }}>
           Logout
         </button>
@@ -569,14 +579,14 @@ function App() {
         {question && (
           <div className="fade-in-up" style={{ ...glass, padding: "20px 24px", marginBottom: 25, borderLeft: "3px solid #4CAF50" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, color: "#4CAF50", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>🎯 Interview Question</div>
+              <div style={{ fontSize: 11, color: "#4CAF50", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Interview Question</div>
               <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 12, background: "rgba(79,172,254,0.1)", color: "#4facfe", fontWeight: 700 }}>{questionCategory}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
               <div style={{ fontSize: 17, lineHeight: 1.6, color: t.text, fontWeight: 500, flex: 1, marginRight: 12 }}>{question}</div>
               <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                <button onClick={() => setShowCustomInput(v => !v)} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>✏️ Custom</button>
-                <button onClick={refreshQuestion} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>↻ Refresh</button>
+                <button onClick={() => setShowCustomInput(v => !v)} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>?? Custom</button>
+                <button onClick={refreshQuestion} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>? Refresh</button>
               </div>
             </div>
             {showCustomInput && (
@@ -639,18 +649,18 @@ function App() {
               )}
               {!recording ? (
                 <button onClick={startRecording} style={{ width: "100%", padding: "14px", fontSize: 16, background: "linear-gradient(135deg,#4CAF50,#2e7d32)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 700, letterSpacing: 0.3, boxShadow: "0 4px 20px rgba(76,175,80,0.4)" }}>
-                  🎙️ Start Interview
+                  ??? Start Interview
                 </button>
               ) : (
                 <button onClick={stopRecording} style={{ width: "100%", padding: "14px", fontSize: 16, background: "linear-gradient(135deg,#f44336,#b71c1c)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 700, letterSpacing: 0.3, boxShadow: "0 4px 20px rgba(244,67,54,0.4)" }}>
-                  ⏹️ Stop & Get Feedback
+                  ?? Stop & Get Feedback
                 </button>
               )}
             </div>
 
             {recording && showTips && (
               <div style={{ ...glass, marginTop: 12, padding: 15, border: `1px solid ${t.cardBorder}`, background: darkMode ? "rgba(10,15,35,0.72)" : "rgba(255,255,255,0.75)" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#43e97b", marginBottom: 6 }}>💡 Live Interview Tips</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#43e97b", marginBottom: 6 }}>?? Live Interview Tips</div>
                 <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5, fontSize: 13 }}>
                   <li>Keep your shoulders relaxed and face the camera squarely.</li>
                   <li>Speak with a clear pace and avoid rushing to fill silence.</li>
@@ -664,7 +674,7 @@ function App() {
 
           <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
             <div style={{ ...glass, padding: 20, flex: 1 }}>
-              <div style={{ fontSize: 11, color: t.subtext, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>🎤 Live Transcription</div>
+              <div style={{ fontSize: 11, color: t.subtext, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Live Transcription</div>
               <div ref={transcriptBoxRef} style={{ color: t.subtext, lineHeight: 1.7, minHeight: 120, maxHeight: 200, overflowY: "auto", overflowX: "hidden", margin: 0, fontSize: 14, paddingRight: 6, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
                 {fullTranscript ? (
                   <p style={{ margin: 0, color: t.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -678,12 +688,19 @@ function App() {
                   </p>
                 ) : <span style={{ opacity: 0.7 }}>Speak to see your transcription here...</span>}
               </div>
+              {recording && Object.keys(fillerBreakdown).length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                  {Object.entries(fillerBreakdown).map(([word, cnt]) => (
+                    <span key={word} style={{ background: "rgba(255,183,77,0.15)", border: "1px solid rgba(255,183,77,0.3)", color: "#FFB74D", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{word}: {cnt}</span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={{ ...glass, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontSize: 11, color: t.subtext, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>📈 Score Trend</div>
+                  <div style={{ fontSize: 11, color: t.subtext, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Score Trend</div>
                   <span style={{ background: "rgba(76,175,80,0.15)", color: "#4CAF50", padding: "2px 9px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>{sessions.length} sessions</span>
                 </div>
                 <button onClick={resetSessions} style={{ fontSize: 12, background: "transparent", border: "1px solid #f44336", color: "#f44336", padding: "4px 12px", borderRadius: 20, cursor: "pointer" }}>
@@ -708,7 +725,7 @@ function App() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div style={{ textAlign: "center", padding: "20px 0", color: t.subtext, fontSize: 13 }}>Complete 2+ sessions to see your trend 📊</div>
+                <div style={{ textAlign: "center", padding: "20px 0", color: t.subtext, fontSize: 13 }}>Complete 2+ sessions to see your trend ??</div>
               )}
 
               <div style={{ marginTop: 12, maxHeight: 130, overflowY: "auto" }}>
@@ -752,15 +769,15 @@ function App() {
 
         {scorecard && (
           <div className="fade-in-scale" style={{ ...glass, border: "1px solid rgba(76,175,80,0.3)", padding: 30, marginTop: 25 }}>
-            <h2 style={{ margin: "0 0 24px", fontWeight: 800, fontSize: 22, letterSpacing: "-0.5px", background: "linear-gradient(90deg,#43e97b,#4facfe)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>🏆 Post-Interview Scorecard</h2>
+            <h2 style={{ margin: "0 0 24px", fontWeight: 800, fontSize: 22, letterSpacing: "-0.5px", background: "linear-gradient(90deg,#43e97b,#4facfe)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>?? Post-Interview Scorecard</h2>
 
             <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
               {[
-                { label: "Grade", value: scorecard.grade || "B", bg: gradeGradient(scorecard.grade), icon: "🎓" },
-                { label: "Total Score", value: totalScoreUI, bg: "linear-gradient(135deg,#4facfe,#00f2fe)", icon: "⭐" },
-                { label: "Eye Contact", value: `${scorecard.eye_contact}%`, bg: "linear-gradient(135deg,#f7971e,#ffd200)", icon: "👁️" },
-                { label: "WPM", value: scorecard.wpm, bg: "linear-gradient(135deg,#a18cd1,#fbc2eb)", icon: "💬" },
-                { label: "Filler Words", value: scorecard.filler_count, bg: "linear-gradient(135deg,#f44336,#ff6b6b)", icon: "⚠️" },
+                { label: "Grade", value: scorecard.grade || "B", bg: gradeGradient(scorecard.grade), icon: "??" },
+                { label: "Total Score", value: totalScoreUI, bg: "linear-gradient(135deg,#4facfe,#00f2fe)", icon: "?" },
+                { label: "Eye Contact", value: `${parseFloat(scorecard.eye_contact || 0).toFixed(1)}%`, bg: "linear-gradient(135deg,#f7971e,#ffd200)", icon: "???" },
+                { label: "WPM", value: parseFloat(scorecard.wpm || 0).toFixed(1), bg: "linear-gradient(135deg,#a18cd1,#fbc2eb)", icon: "??" },
+                { label: "Filler Words", value: scorecard.filler_count || 0, bg: "linear-gradient(135deg,#f44336,#ff6b6b)", icon: "??" },
               ].map((item, i) => (
                 <div key={item.label} className="score-card-item" style={{ background: item.bg, color: "white", padding: "18px 22px", borderRadius: 16, textAlign: "center", minWidth: 105, boxShadow: "0 6px 24px rgba(0,0,0,0.25)", animationDelay: `${i * 0.08}s` }}>
                   <div style={{ fontSize: 18, marginBottom: 4 }}>{item.icon}</div>
@@ -781,7 +798,7 @@ function App() {
             {scorecardTab === "STAR" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 25 }}>
                 <div>
-                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>⭐ STAR Breakdown</h3>
+                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>? STAR Breakdown</h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {["situation", "task", "action", "result"].map((key, i) => {
                       const score = scorecard[`${key}_score`] || 0;
@@ -802,13 +819,13 @@ function App() {
                     })}
                   </div>
                   <div style={{ marginTop: 14, background: t.feedbackBg, padding: 16, borderRadius: 14, border: `1px solid rgba(76,175,80,0.2)` }}>
-                    <div style={{ color: "#43e97b", marginBottom: 8, fontWeight: 700, fontSize: 13 }}>💡 Overall Feedback</div>
+                    <div style={{ color: "#43e97b", marginBottom: 8, fontWeight: 700, fontSize: 13 }}>?? Overall Feedback</div>
                     <p style={{ color: t.subtext, lineHeight: 1.7, margin: 0, fontSize: 13 }}>{scorecard.overall_feedback}</p>
                   </div>
                 </div>
 
                 <div style={{ ...glass, padding: 20 }}>
-                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>💡 General Improvement Tips</h3>
+                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>?? General Improvement Tips</h3>
                   <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5 }}>
                     <li>Keep responses structured in STAR format.</li>
                     <li>Look at the camera and maintain steady pace.</li>
@@ -822,7 +839,7 @@ function App() {
 
             {scorecardTab === "Radar" && (
               <div>
-                <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>📡 Performance Radar</h3>
+                <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>?? Performance Radar</h3>
                 <ResponsiveContainer width="100%" height={320}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke={darkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"} />
@@ -842,7 +859,7 @@ function App() {
 
             {scorecardTab === "Tips" && (
               <div style={{ ...glass, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ fontWeight: 700, color: "#4CAF50" }}>📘 Quick Tips While Recording</div>
+                <div style={{ fontWeight: 700, color: "#4CAF50" }}>?? Quick Tips While Recording</div>
                 <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5 }}>
                   <li>Maintain eye contact with the camera for at least 70% of the time.</li>
                   <li>Use the STAR format: Situation, Task, Action, Result.</li>

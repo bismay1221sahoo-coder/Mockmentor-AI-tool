@@ -222,7 +222,44 @@ async def get_question():
     import random
     return {"question": random.choice(INTERVIEW_QUESTIONS)}
 
-@app.get("/sessions/{session_id}")
+@app.get("/streak")
+async def get_streak(user_id: int = Depends(get_current_user)):
+    with sqlite3.connect("sessions.db") as conn:
+        c = conn.cursor()
+        c.execute("SELECT DISTINCT date FROM sessions WHERE user_id = ? ORDER BY id DESC", (user_id,))
+        dates = [row[0] for row in c.fetchall()]
+    if not dates:
+        return {"streak": 0, "best_streak": 0}
+    from datetime import datetime
+    today = datetime.now(timezone.utc).strftime("%b %d").lstrip("0") if datetime.now(timezone.utc).day >= 10 else datetime.now(timezone.utc).strftime("%b %d")
+    streak = 0
+    best = 0
+    cur = 0
+    seen = set(dates)
+    # count current streak from today backwards
+    check = datetime.now(timezone.utc)
+    for _ in range(365):
+        d = check.strftime("%b %d")
+        if d in seen:
+            streak += 1
+            check = check.replace(day=check.day - 1) if check.day > 1 else check
+        else:
+            break
+        try:
+            check = check.replace(day=check.day - 1)
+        except:
+            break
+    # best streak
+    cur = 0
+    for i, d in enumerate(reversed(dates)):
+        if i == 0:
+            cur = 1
+        else:
+            cur += 1
+        best = max(best, cur)
+    return {"streak": streak, "best_streak": best}
+
+
 async def get_session_detail(session_id: int, user_id: int = Depends(get_current_user)):
     with sqlite3.connect("sessions.db") as conn:
         c = conn.cursor()
@@ -256,6 +293,68 @@ async def reset_sessions(user_id: int = Depends(get_current_user)):
     return {"message": "Sessions cleared"}
 
 @app.post("/evaluate")
+async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
+    question = data.get("question", "")
+    transcript = data.get("transcript", "")
+    eye_contact = data.get("eye_contact", 0)
+    filler_count = data.get("filler_count", 0)
+    wpm = data.get("wpm", 0)
+
+    if not transcript or len(transcript.strip()) < 10:
+        return {"error": "No answer detected", "overall_feedback": "No answer was provided. Please speak clearly into the microphone."}
+
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Question: {question}\n\nAnswer: {transcript}"}
+            ],
+            temperature=0.3,
+        )
+        raw = response.choices[0].message.content.strip()
+        try:
+            result = json.loads(raw)
+        except:
+            result = {"overall_feedback": raw, "total_score": 50, "grade": "B"}
+
+        result["eye_contact"] = round(eye_contact, 1)
+        result["filler_count"] = filler_count
+        result["wpm"] = round(wpm, 1)
+
+        if eye_contact < 50:
+            result["overall_feedback"] += " Your eye contact was low - try to look at the camera more."
+        if filler_count > 5:
+            result["overall_feedback"] += f" You used {filler_count} filler words - practice pausing instead."
+
+        with sqlite3.connect("sessions.db") as conn:
+            conn.execute("INSERT INTO sessions (user_id, date, score, grade, eye_contact, wpm, filler_count, question, transcript, overall_feedback) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (user_id, datetime.now(timezone.utc).strftime("%b %d"), result.get("total_score", 0), result.get("grade", "B"),
+                 eye_contact, wpm, filler_count, question, transcript, result.get("overall_feedback", "")))
+            conn.commit()
+        return result
+    except Exception as e:
+        print("Evaluation Error:", e)
+        return {"error": str(e), "overall_feedback": "Evaluation failed. Please try again."}
+
+
+async def get_followup(data: dict, user_id: int = Depends(get_current_user)):
+    question = data.get("question", "")
+    transcript = data.get("transcript", "")
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a professional interviewer. Based on the candidate's answer, ask ONE sharp follow-up question to dig deeper. Return ONLY the question, nothing else."},
+                {"role": "user", "content": f"Original Question: {question}\n\nCandidate's Answer: {transcript}"}
+            ],
+            temperature=0.5,
+        )
+        return {"followup": response.choices[0].message.content.strip()}
+    except Exception as e:
+        return {"followup": "Can you elaborate more on the outcome and what you learned from it?"}
+
+
 async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
     question = data.get("question", "")
     transcript = data.get("transcript", "")
@@ -309,32 +408,53 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    import uuid
+    import asyncio
     await websocket.accept()
-    print("Client connected")
+    session_id = uuid.uuid4().hex[:8]
+    print(f"[WS] Connected: {session_id}")
+
+    async def transcribe_and_send(data: bytes, idx: int):
+        fname = f"audio_{session_id}_{idx}.webm"
+        try:
+            with open(fname, "wb") as f:
+                f.write(data)
+            with open(fname, "rb") as audio_file:
+                result = await asyncio.to_thread(
+                    client.audio.transcriptions.create,
+                    file=(fname, open(fname, "rb"), "audio/webm"),
+                    model="whisper-large-v3",
+                    language="en",
+                    prompt="Interview answer in English."
+                )
+            text = result.text.strip()
+            print(f"[WS] [{idx}] {len(data)}b -> {text!r}")
+            if text and not websocket.client_state.name == "DISCONNECTED":
+                await websocket.send_text(text)
+        except Exception as e:
+            print(f"[WS] [{idx}] Error: {e}")
+        finally:
+            try:
+                os.remove(fname)
+            except:
+                pass
+
+    chunk_idx = 0
+    tasks = []
     try:
         while True:
-            try:
-                data = await websocket.receive_bytes()
-                with open("audio.webm", "wb") as f:
-                    f.write(data)
-                try:
-                    with open("audio.webm", "rb") as f:
-                        result = client.audio.transcriptions.create(
-                            file=f,
-                            model="whisper-large-v3",
-                            prompt="This is an English interview conversation."
-                        )
-                    text = result.text.strip()
-                    if text:
-                        print("Transcript:", text)
-                        await websocket.send_text(text)
-                except Exception as e:
-                    print("Transcription error:", e)
-            except Exception as e:
-                print("Receive error:", e)
-                break
+            data = await websocket.receive_bytes()
+            print(f"[WS] Chunk {chunk_idx}: {len(data)} bytes")
+            if len(data) < 1000:
+                continue
+            task = asyncio.create_task(transcribe_and_send(data, chunk_idx))
+            tasks.append(task)
+            chunk_idx += 1
     except Exception as e:
-        print("Disconnected:", e)
+        print(f"[WS] Disconnected {session_id}: {e}")
+    finally:
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 INTERVIEW_QUESTIONS = [
     "Tell me about a time you faced a major challenge at work or in a project.",
