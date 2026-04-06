@@ -106,6 +106,10 @@ function App() {
   const [recording, setRecording] = useState(false);
   const [fullTranscript, setFullTranscript] = useState("");
   const [faceStatus, setFaceStatus] = useState("Detecting...");
+  const [lookingAwayCount, setLookingAwayCount] = useState(0);
+  const [noFaceCount, setNoFaceCount] = useState(0);
+  const [multipleFaceCount, setMultipleFaceCount] = useState(0);
+  const [multiFaceWarnings, setMultiFaceWarnings] = useState(0);
   const [eyeScore, setEyeScore] = useState(0);
   const [totalFrames, setTotalFrames] = useState(0);
   const [fillerCount, setFillerCount] = useState(0);
@@ -120,13 +124,33 @@ function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("darkMode") === "false" ? false : true);
   const [activePage, setActivePage] = useState("home");
   const [questionCategory, setQuestionCategory] = useState("Behavioral");
+  const [selectedRole, setSelectedRole] = useState("General");
+  const [selectedDifficulty, setSelectedDifficulty] = useState("auto");
   const [scorecardTab, setScorecardTab] = useState("STAR");
   const [animatedTotalScore, setAnimatedTotalScore] = useState(0);
   const [showTips, setShowTips] = useState(true);
+  const [autoCleanTranscript, setAutoCleanTranscript] = useState(true);
+  const [compactMode, setCompactMode] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    typeof window !== "undefined" ? window.innerWidth < 900 : false
+  );
+  const [focusMode, setFocusMode] = useState(false);
+  const [analytics, setAnalytics] = useState({ total_sessions: 0, weekly_average: 0, trend_slope: 0, consistency_score: 0, series: [] });
+  const [paceTimeline, setPaceTimeline] = useState([]);
+  const [framingHint, setFramingHint] = useState("Frame looks good");
+  const [framingIssueCount, setFramingIssueCount] = useState(0);
+  const [reanswerMode, setReanswerMode] = useState(false);
+  const [compareBaseline, setCompareBaseline] = useState(null);
 
   useEffect(() => {
     localStorage.setItem("darkMode", darkMode);
   }, [darkMode]);
+
+  useEffect(() => {
+    const onResize = () => setIsMobileViewport(window.innerWidth < 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const t = {
     bg: darkMode
@@ -150,16 +174,18 @@ function App() {
   const chunksRef = useRef([]);
   const intervalRef = useRef(null);
   const stopRecordingRef = useRef(null);
+  const recordingRef = useRef(false);
   const eyeScoreRef = useRef(0);
   const totalFramesRef = useRef(0);
   const startTimeRef = useRef(null);
   const fullTranscriptRef = useRef("");
+  const lastFaceEventRef = useRef("detecting");
+  const lastFramingHintRef = useRef("Frame looks good");
 
   const [streak, setStreak] = useState(0);
   const [followupQuestion, setFollowupQuestion] = useState("");
-  const [followupMode, setFollowupMode] = useState(false);
   const [followupLoading, setFollowupLoading] = useState(false);
-  const [followupTranscript, setFollowupTranscript] = useState("");
+  const [followupRound, setFollowupRound] = useState(0);
 
   const transcriptBoxRef = useRef(null);
 
@@ -189,11 +215,11 @@ function App() {
 
   const refreshQuestion = () => {
     const categories = ["Behavioral", "Technical", "Situational", "HR"];
-    fetch("http://localhost:8000/question")
+    fetch(`http://localhost:8000/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => {
         setQuestion(data.question);
-        setQuestionCategory(categories[Math.floor(Math.random() * categories.length)]);
+        setQuestionCategory(data.role || categories[Math.floor(Math.random() * categories.length)]);
         showToast("Question refreshed successfully");
       })
       .catch(() => showToast("Failed to refresh question"));
@@ -234,27 +260,67 @@ function App() {
   }, [token]);
 
   const fetchSessions = (tok) => {
-    fetch("http://localhost:8000/sessions", { headers: { Authorization: `Bearer ${tok || token}` } })
+    const headers = { Authorization: `Bearer ${tok || token}` };
+    fetch("http://localhost:8000/sessions?limit=120", { headers })
       .then(res => res.json())
       .then(data => setSessions(data.sessions || []))
       .catch(() => {});
-    fetch("http://localhost:8000/streak", { headers: { Authorization: `Bearer ${tok || token}` } })
+    fetch("http://localhost:8000/streak", { headers })
       .then(res => res.json())
       .then(data => setStreak(data.streak || 0))
+      .catch(() => {});
+    fetch("http://localhost:8000/analytics", { headers })
+      .then(res => res.json())
+      .then(data => setAnalytics(data || { total_sessions: 0, weekly_average: 0, trend_slope: 0, consistency_score: 0, series: [] }))
       .catch(() => {});
   };
 
   useEffect(() => {
     if (!token) return;
     const categories = ["Behavioral", "Technical", "Situational", "HR"];
-    fetch("http://localhost:8000/question")
+    fetch(`http://localhost:8000/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => {
         setQuestion(data.question);
-        setQuestionCategory(categories[Math.floor(Math.random() * categories.length)]);
+        setQuestionCategory(data.role || categories[Math.floor(Math.random() * categories.length)]);
       });
     fetchSessions(token);
-  }, [token]);
+  }, [token, selectedRole, selectedDifficulty]);
+
+  const cleanTranscriptText = (rawText) => {
+    const text = (rawText || "").trim().replace(/\s+/g, " ");
+    if (!text) return "";
+    let normalized = text
+      .replace(/\bi\b/g, "I")
+      .replace(/\s+([,.!?])/g, "$1")
+      .replace(/([a-z0-9])\s+([A-Z])/g, "$1. $2");
+    if (!/[.!?]$/.test(normalized)) normalized += ".";
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  };
+
+  const fetchFollowupQuestion = async (round) => {
+    setFollowupLoading(true);
+    try {
+      const transcriptForFollowup = autoCleanTranscript ? cleanTranscriptText(fullTranscriptRef.current) : fullTranscriptRef.current;
+      const resp = await fetch("http://localhost:8000/followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({
+          question,
+          transcript: transcriptForFollowup,
+          round,
+          difficulty: selectedDifficulty === "auto" ? "medium" : selectedDifficulty,
+        }),
+      });
+      const body = await resp.json();
+      setFollowupQuestion(body.followup || "");
+      setFollowupRound(body.round || round);
+    } catch {
+      setFollowupQuestion("Could you expand with deeper ownership and measurable results?");
+      setFollowupRound(round);
+    }
+    setFollowupLoading(false);
+  };
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -262,13 +328,51 @@ function App() {
      locateFile: (file) =>
   `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
     });
-    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true });
+    faceMesh.setOptions({ maxNumFaces: 2, refineLandmarks: true });
     faceMesh.onResults((results) => {
-      if (results.multiFaceLandmarks?.length > 0) {
+      const faces = results.multiFaceLandmarks?.length || 0;
+
+      if (faces > 1) {
+        setFaceStatus("Multiple Faces Detected");
+        if (recordingRef.current && lastFaceEventRef.current !== "multiple") {
+          setMultipleFaceCount((prev) => prev + 1);
+          setMultiFaceWarnings((prev) => {
+            const nextWarnings = prev + 1;
+            if (nextWarnings >= 2) {
+              showToast("2 warnings reached: multiple faces detected. Auto-stopping.");
+              stopRecordingRef.current?.();
+            } else {
+              showToast(`Warning ${nextWarnings}/2: only one face should be visible.`);
+            }
+            return nextWarnings;
+          });
+        }
+        lastFaceEventRef.current = "multiple";
+        return;
+      }
+
+      if (faces === 1) {
         const landmarks = results.multiFaceLandmarks[0];
         const leftEye = landmarks[33];
         const rightEye = landmarks[263];
         const nose = landmarks[1];
+        const xs = landmarks.map((p) => p.x);
+        const ys = landmarks.map((p) => p.y);
+        const faceWidth = Math.max(...xs) - Math.min(...xs);
+        const faceCenterX = (Math.max(...xs) + Math.min(...xs)) / 2;
+        const faceCenterY = (Math.max(...ys) + Math.min(...ys)) / 2;
+
+        let nextFramingHint = "Frame looks good";
+        if (faceWidth < 0.22) nextFramingHint = "Move closer to camera";
+        else if (faceWidth > 0.62) nextFramingHint = "Move a little back";
+        else if (Math.abs(faceCenterX - 0.5) > 0.16 || Math.abs(faceCenterY - 0.5) > 0.2) nextFramingHint = "Center your face in frame";
+
+        setFramingHint(nextFramingHint);
+        if (recordingRef.current && nextFramingHint !== "Frame looks good" && lastFramingHintRef.current !== nextFramingHint) {
+          setFramingIssueCount((prev) => prev + 1);
+        }
+        lastFramingHintRef.current = nextFramingHint;
+
         const eyeCenterX = (leftEye.x + rightEye.x) / 2;
         const diff = Math.abs(eyeCenterX - nose.x);
         setTotalFrames((prev) => prev + 1);
@@ -277,11 +381,20 @@ function App() {
           setEyeScore((prev) => prev + 1);
           eyeScoreRef.current += 1;
           setFaceStatus("Looking at Camera");
+          lastFaceEventRef.current = "camera";
         } else {
           setFaceStatus("Looking Away");
+          if (recordingRef.current && lastFaceEventRef.current !== "away") {
+            setLookingAwayCount((prev) => prev + 1);
+          }
+          lastFaceEventRef.current = "away";
         }
       } else {
         setFaceStatus("No Face Detected");
+        if (recordingRef.current && lastFaceEventRef.current !== "none") {
+          setNoFaceCount((prev) => prev + 1);
+        }
+        lastFaceEventRef.current = "none";
       }
     });
     const camera = new Camera(videoRef.current, {
@@ -302,6 +415,8 @@ function App() {
         const currentWpm = wordCount / elapsed;
         if (currentWpm > 160) showToast("Slow down! You're speaking too fast.");
         if (fillerCount > 5) showToast("Try to avoid filler words like 'um' and 'uh'.");
+        const zone = currentWpm < 100 ? "slow" : currentWpm <= 150 ? "ideal" : "fast";
+        setPaceTimeline((prev) => [...prev.slice(-23), { t: new Date().toLocaleTimeString([], { minute: "2-digit", second: "2-digit" }), wpm: Math.round(currentWpm), zone }]);
       }
     }, 5000);
     return () => clearInterval(interval);
@@ -310,6 +425,10 @@ function App() {
   useEffect(() => {
     stopRecordingRef.current = stopRecording;
   });
+
+  useEffect(() => {
+    recordingRef.current = recording;
+  }, [recording]);
 
   useEffect(() => {
     if (recording) {
@@ -337,6 +456,12 @@ function App() {
     videoRef.current.srcObject = stream;
     const audioStream = new MediaStream(stream.getAudioTracks());
     setFaceStatus("Detecting...");
+    setLookingAwayCount(0);
+    setNoFaceCount(0);
+    setMultipleFaceCount(0);
+    setMultiFaceWarnings(0);
+    setFramingHint("Frame looks good");
+    setFramingIssueCount(0);
     setWordCount(0);
     setFillerCount(0);
     setFillerBreakdown({});
@@ -349,6 +474,9 @@ function App() {
     fullTranscriptRef.current = "";
     evaluatingRef.current = false;
     startTimeRef.current = null;
+    lastFaceEventRef.current = "detecting";
+    lastFramingHintRef.current = "Frame looks good";
+    setPaceTimeline([]);
 
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
       ? "audio/webm;codecs=opus"
@@ -360,26 +488,37 @@ function App() {
     const ws = new WebSocket("ws://localhost:8000/ws");
     wsRef.current = ws;
 
+    const countFillers = (text) => {
+      const lowerText = text.toLowerCase();
+      const fillers = ["um", "uh", "like", "you know", "basically"];
+      const breakdown = {};
+      let total = 0;
+      fillers.forEach((f) => {
+        const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const matches = lowerText.match(new RegExp(`\\b${escaped}\\b`, "g")) || [];
+        if (matches.length > 0) {
+          breakdown[f] = matches.length;
+          total += matches.length;
+        }
+      });
+      return { total, breakdown };
+    };
+
     ws.onmessage = (event) => {
       const newText = event.data.trim();
       if (!newText) return;
-      fullTranscriptRef.current = newText;
-      setFullTranscript(newText);
-      const words = newText.split(/\s+/);
-      setWordCount(words.length);
-      const fillers = ["um", "uh", "like", "you know", "basically"];
-      let count = 0;
-      const breakdown = {};
-      fillers.forEach((f) => {
-        const matches = (newText.toLowerCase().match(new RegExp(f, 'g')) || []).length;
-        if (matches > 0) { count += matches; breakdown[f] = matches; }
-      });
-      setFillerCount(count);
-      setFillerBreakdown(prev => {
-        const updated = { ...prev };
-        Object.keys(breakdown).forEach(k => { updated[k] = (updated[k] || 0) + breakdown[k]; });
-        return updated;
-      });
+      const prev = fullTranscriptRef.current;
+      const mergedText = !prev
+        ? newText
+        : (newText.startsWith(prev) ? newText : `${prev} ${newText}`.trim());
+
+      fullTranscriptRef.current = mergedText;
+      setFullTranscript(mergedText);
+      setWordCount(mergedText ? mergedText.split(/\s+/).length : 0);
+
+      const fillerStats = countFillers(mergedText);
+      setFillerCount(fillerStats.total);
+      setFillerBreakdown(fillerStats.breakdown);
     };
 
     ws.onerror = (e) => console.error("WS error:", e);
@@ -425,28 +564,29 @@ function App() {
     setRecording(false);
     const eyeContactPct = totalFramesRef.current > 0 ? (eyeScoreRef.current / totalFramesRef.current) * 100 : 0;
     const wpm = startTimeRef.current ? (wordCount / ((Date.now() - startTimeRef.current) / 60000)) : 0;
+    const transcriptToEvaluate = autoCleanTranscript ? cleanTranscriptText(fullTranscriptRef.current) : fullTranscriptRef.current;
+    if (autoCleanTranscript) {
+      fullTranscriptRef.current = transcriptToEvaluate;
+      setFullTranscript(transcriptToEvaluate);
+    }
     setLoading(true);
     try {
       const res = await fetch("http://localhost:8000/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ question, transcript: fullTranscriptRef.current, eye_contact: eyeContactPct, filler_count: fillerCount, wpm }),
+        body: JSON.stringify({ question, transcript: transcriptToEvaluate, eye_contact: eyeContactPct, filler_count: fillerCount, wpm }),
       });
       const data = await res.json();
+      if (reanswerMode && compareBaseline) {
+        data.previous_score = compareBaseline.total_score || 0;
+        data.score_delta = (data.total_score || 0) - (compareBaseline.total_score || 0);
+      }
       setScorecard(data);
       fetchSessions();
-      // fetch follow-up question
-            setFollowupLoading(true);
       setFollowupQuestion("");
-      setFollowupMode(false);
-      fetch("http://localhost:8000/followup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({ question, transcript: fullTranscriptRef.current }),
-      }).then(r => r.json()).then(d => {
-        setFollowupQuestion(d.followup || "");
-        setFollowupLoading(false);
-      }).catch(() => setFollowupLoading(false));
+      await fetchFollowupQuestion(1);
+      setReanswerMode(false);
+      setCompareBaseline(null);
     } catch (e) {
       console.error("Evaluation failed:", e);
     }
@@ -464,10 +604,10 @@ function App() {
   const confidenceMeter = Math.min(100, Math.max(0, (parseFloat(eyeContactPct) || 0) * 0.75 + (100 - Math.min(parseFloat(wpm) || 0, 160)) * 0.25));
 
   const metricData = [
-    { label: "Eye Contact", value: Math.round(parseFloat(eyeContactPct) || 0), color: "#4CAF50", icon: "???" },
-    { label: "WPM", value: Math.min(100, Math.round((parseFloat(wpm) || 0) / 1.6)), color: "#2196F3", icon: "??" },
-    { label: "Filler", value: Math.min(100, fillerCount * 10), color: "#FF9800", icon: "??" },
-    { label: "Fluency", value: Math.min(100, Math.round((wordCount / (selectedDuration || 1)) * 12)), color: "#9C27B0", icon: "??" },
+    { label: "Eye Contact", value: Math.round(parseFloat(eyeContactPct) || 0), color: "#4CAF50", icon: "👁️" },
+    { label: "WPM", value: Math.min(100, Math.round((parseFloat(wpm) || 0) / 1.6)), color: "#2196F3", icon: "🗣️" },
+    { label: "Filler", value: Math.min(100, fillerCount * 10), color: "#FF9800", icon: "🧩" },
+    { label: "Fluency", value: Math.min(100, Math.round((wordCount / (selectedDuration || 1)) * 12)), color: "#9C27B0", icon: "🎙️" },
   ];
 
   const ScoreTrendTooltip = ({ active, payload, label }) => {
@@ -495,6 +635,34 @@ function App() {
   const totalScoreUI = scorecard ? `${animatedTotalScore}/100` : "0/100";
 
   const trendData = [...sessions].reverse().map(s => ({ date: s.date, score: parseInt(s.score, 10) || 0 }));
+  const compactLayout = compactMode || isMobileViewport;
+  const analyticsCards = [
+    { label: "Weekly Avg", value: analytics.weekly_average || 0, color: "#4facfe" },
+    { label: "Trend Slope", value: analytics.trend_slope || 0, color: "#43e97b" },
+    { label: "Consistency", value: `${analytics.consistency_score || 0}%`, color: "#f7b733" },
+  ];
+  const badges = [
+    { id: "streak7", label: "7-Day Fire", unlocked: streak >= 7 },
+    { id: "highscore", label: "90+ Master", unlocked: sessions.some((s) => (parseInt(s.score, 10) || 0) >= 90) },
+    { id: "nofiller", label: "No Filler Hero", unlocked: sessions.some((s) => (parseInt(s.filler_count, 10) || 0) === 0) },
+    { id: "consistent", label: "Consistency Pro", unlocked: (analytics.consistency_score || 0) >= 80 },
+  ];
+
+  const handleReanswer = () => {
+    if (!question) return;
+    setReanswerMode(true);
+    setCompareBaseline(scorecard);
+    startRecording();
+  };
+
+  const toggleFocusMode = async () => {
+    if (!focusMode && document.documentElement.requestFullscreen) {
+      try { await document.documentElement.requestFullscreen(); } catch {}
+    } else if (focusMode && document.fullscreenElement && document.exitFullscreen) {
+      try { await document.exitFullscreen(); } catch {}
+    }
+    setFocusMode((prev) => !prev);
+  };
 
   const gradeColor = (g) => {
     if (g === "A") return "#4CAF50";
@@ -536,6 +704,13 @@ function App() {
         </div>
       )}
 
+      {focusMode && (
+        <button onClick={toggleFocusMode} style={{ position: "fixed", top: 18, right: 18, zIndex: 1100, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(0,0,0,0.45)", color: "#fff", borderRadius: 16, padding: "8px 12px", cursor: "pointer", fontSize: 12 }}>
+          Exit Focus
+        </button>
+      )}
+
+      {!focusMode && (
       <div style={{ background: t.navBg, backdropFilter: t.blur, WebkitBackdropFilter: t.blur, padding: "12px 28px", borderBottom: `1px solid ${t.cardBorder}`, display: "flex", alignItems: "center", gap: 12, position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 20px rgba(0,0,0,0.15)" }}>
         <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#4CAF50", boxShadow: "0 0 10px rgba(76,175,80,0.5)" }} />
         <h2 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: t.text }}>MockMentor AI</h2>
@@ -559,35 +734,67 @@ function App() {
         </div>
 
         <span style={{ marginLeft: "auto", fontSize: 12, color: t.subtext, fontWeight: 500, letterSpacing: 0.5 }}>Interview Preparation Platform</span>
+        <span style={{ fontSize: 11, color: "#4facfe", background: "rgba(79,172,254,0.12)", border: "1px solid rgba(79,172,254,0.35)", borderRadius: 14, padding: "4px 10px", fontWeight: 700 }}>
+          {selectedRole} | {selectedDifficulty.toUpperCase()}
+        </span>
         {streak > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 5, background: "linear-gradient(135deg,rgba(255,152,0,0.15),rgba(255,87,34,0.15))", border: "1px solid rgba(255,152,0,0.3)", borderRadius: 20, padding: "5px 14px" }}>
-            <span style={{ fontSize: 15 }}>??</span>
+            <span style={{ fontSize: 15 }}>🔥</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: "#FF9800" }}>{streak} day streak</span>
           </div>
         )}
         <button onClick={() => setDarkMode(!darkMode)} style={{ marginLeft: 12, background: darkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", border: `1px solid ${t.cardBorder}`, borderRadius: 20, padding: "6px 16px", cursor: "pointer", fontSize: 13, color: t.text, fontWeight: 500 }}>
-          {darkMode ? "?? Light" : "?? Dark"}
+          {darkMode ? "🌞 Light" : "🌙 Dark"}
         </button>
-        {user && <span style={{ fontSize: 13, color: t.subtext, marginLeft: 8 }}>?? {user.name}</span>}
+        <button onClick={() => setCompactMode((v) => !v)} style={{ marginLeft: 8, background: "rgba(79,172,254,0.12)", border: "1px solid rgba(79,172,254,0.35)", borderRadius: 20, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#4facfe", fontWeight: 600 }}>
+          {compactLayout ? "Desktop View" : "Compact Mode"}
+        </button>
+        <button onClick={toggleFocusMode} style={{ marginLeft: 8, background: "rgba(67,233,123,0.12)", border: "1px solid rgba(67,233,123,0.35)", borderRadius: 20, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#43e97b", fontWeight: 600 }}>
+          🎯 Focus
+        </button>
+        {user && <span style={{ fontSize: 13, color: t.subtext, marginLeft: 8 }}>👤 {user.name}</span>}
         <button onClick={handleLogout} style={{ marginLeft: 8, background: "rgba(244,67,54,0.15)", border: "1px solid rgba(244,67,54,0.4)", borderRadius: 20, padding: "6px 16px", cursor: "pointer", fontSize: 13, color: "#f44336", fontWeight: 500 }}>
           Logout
         </button>
       </div>
+      )}
 
       <div style={{ padding: 30, maxWidth: 1100, margin: "0 auto" }}>
 
         {question && (
           <div className="fade-in-up" style={{ ...glass, padding: "20px 24px", marginBottom: 25, borderLeft: "3px solid #4CAF50" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ fontSize: 11, color: "#4CAF50", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Interview Question</div>
+              <div style={{ fontSize: 11, color: "#4CAF50", textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>💬 Interview Question</div>
               <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 12, background: "rgba(79,172,254,0.1)", color: "#4facfe", fontWeight: 700 }}>{questionCategory}</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
               <div style={{ fontSize: 17, lineHeight: 1.6, color: t.text, fontWeight: 500, flex: 1, marginRight: 12 }}>{question}</div>
               <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-                <button onClick={() => setShowCustomInput(v => !v)} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>?? Custom</button>
-                <button onClick={refreshQuestion} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>? Refresh</button>
+                <button onClick={() => setShowCustomInput(v => !v)} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>✍️ Custom</button>
+                <button onClick={refreshQuestion} style={{ background: "rgba(255,255,255,0.1)", border: `1px solid ${t.cardBorder}`, borderRadius: 14, padding: "8px 12px", color: t.text, fontSize: 12, cursor: "pointer" }}>🔄 Refresh</button>
               </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <select disabled={recording} value={selectedRole} onChange={(e) => setSelectedRole(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${t.cardBorder}`, background: t.card, color: t.text, fontSize: 12, opacity: recording ? 0.65 : 1 }}>
+                {["General", "SDE", "HR", "PM", "Analyst"].map((role) => <option key={role} value={role}>{role}</option>)}
+              </select>
+              <select disabled={recording} value={selectedDifficulty} onChange={(e) => setSelectedDifficulty(e.target.value)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${t.cardBorder}`, background: t.card, color: t.text, fontSize: 12, opacity: recording ? 0.65 : 1 }}>
+                <option value="auto">Auto Difficulty</option>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+              <button onClick={() => setAutoCleanTranscript((v) => !v)} style={{ padding: "8px 10px", borderRadius: 10, border: `1px solid ${autoCleanTranscript ? "rgba(67,233,123,0.5)" : t.cardBorder}`, background: autoCleanTranscript ? "rgba(67,233,123,0.15)" : t.card, color: autoCleanTranscript ? "#43e97b" : t.text, fontSize: 12, cursor: "pointer" }}>
+                {autoCleanTranscript ? "✅ Auto Clean ON" : "Auto Clean OFF"}
+              </button>
+              {scorecard && (
+                <button onClick={handleReanswer} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,183,77,0.5)", background: "rgba(255,183,77,0.14)", color: "#ffb74d", fontSize: 12, cursor: "pointer" }}>
+                  🔁 Re-answer
+                </button>
+              )}
+            </div>
+            <div style={{ fontSize: 11, color: t.subtext, marginTop: 6 }}>
+              {recording ? "Role and difficulty are locked while recording." : "Tip: use Auto for adaptive difficulty progression."}
             </div>
             {showCustomInput && (
               <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
@@ -607,11 +814,39 @@ function App() {
           </div>
         )}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 25 }}>
+        {!focusMode && <div style={{ ...glass, padding: 16, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#4facfe" }}>📊 Analytics Dashboard</div>
+            <div style={{ fontSize: 11, color: t.subtext }}>Total Sessions: {analytics.total_sessions || 0}</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: compactLayout ? "1fr" : "repeat(3, 1fr)", gap: 10 }}>
+            {analyticsCards.map((card) => (
+              <div key={card.label} style={{ border: `1px solid ${card.color}55`, background: `${card.color}12`, borderRadius: 12, padding: "10px 12px" }}>
+                <div style={{ fontSize: 11, color: t.subtext }}>{card.label}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: card.color }}>{card.value}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 11, color: t.subtext, marginBottom: 6 }}>🏆 Achievement Badges</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {badges.map((b) => (
+                <span key={b.id} style={{ padding: "6px 10px", borderRadius: 20, fontSize: 11, border: `1px solid ${b.unlocked ? "rgba(67,233,123,0.45)" : "rgba(255,255,255,0.18)"}`, color: b.unlocked ? "#43e97b" : t.subtext, background: b.unlocked ? "rgba(67,233,123,0.12)" : "rgba(255,255,255,0.04)", fontWeight: 700 }}>
+                  {b.unlocked ? "✅" : "🔒"} {b.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>}
+
+        <div style={{ display: "grid", gridTemplateColumns: compactLayout ? "1fr" : "1fr 1fr", gap: 25 }}>
           <div>
             <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000" }}>
               <video ref={videoRef} autoPlay muted style={{ width: "100%", display: "block" }} />
               <div style={{ position: "absolute", bottom: 10, left: 10, background: faceStatus === "Looking at Camera" ? "rgba(76,175,80,0.85)" : "rgba(244,67,54,0.85)", padding: "5px 12px", borderRadius: 20, fontSize: 13, fontWeight: 600 }}>{faceStatus}</div>
+              <div style={{ position: "absolute", bottom: 10, right: 10, background: framingHint === "Frame looks good" ? "rgba(76,175,80,0.8)" : "rgba(255,152,0,0.85)", padding: "5px 10px", borderRadius: 14, fontSize: 11, fontWeight: 700 }}>
+                📐 {framingHint}
+              </div>
               <div style={{ position: "absolute", top: 10, left: 10, right: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, background: "rgba(0,0,0,0.3)", padding: "6px 10px", borderRadius: 12, fontSize: 12 }}>
                 <span style={{ color: "#b1d8ff" }}>Confidence Meter</span>
                 <div style={{ flex: 1, height: 8, borderRadius: 6, background: "rgba(255,255,255,0.2)", overflow: "hidden", margin: "0 10px" }}>
@@ -636,6 +871,23 @@ function App() {
               ))}
             </div>
 
+            <div style={{ ...glass, marginTop: 12, padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <div style={{ textAlign: "center", background: "rgba(255,152,0,0.12)", border: "1px solid rgba(255,152,0,0.3)", borderRadius: 10, padding: "8px 6px" }}>
+                <div style={{ fontSize: 11, color: "#ffb74d", fontWeight: 700 }}>🙈 Looking Away</div>
+                <div style={{ fontSize: 18, color: "#ffd180", fontWeight: 800 }}>{lookingAwayCount}</div>
+              </div>
+              <div style={{ textAlign: "center", background: "rgba(244,67,54,0.12)", border: "1px solid rgba(244,67,54,0.35)", borderRadius: 10, padding: "8px 6px" }}>
+                <div style={{ fontSize: 11, color: "#ef9a9a", fontWeight: 700 }}>🚫 No Face</div>
+                <div style={{ fontSize: 18, color: "#ffcdd2", fontWeight: 800 }}>{noFaceCount}</div>
+              </div>
+              <div style={{ textAlign: "center", background: "rgba(156,39,176,0.12)", border: "1px solid rgba(156,39,176,0.35)", borderRadius: 10, padding: "8px 6px" }}>
+                <div style={{ fontSize: 11, color: "#ce93d8", fontWeight: 700 }}>👥 Multiple Faces</div>
+                <div style={{ fontSize: 18, color: "#e1bee7", fontWeight: 800 }}>{multipleFaceCount}</div>
+                <div style={{ fontSize: 10, color: "#ce93d8" }}>Warnings: {multiFaceWarnings}/2</div>
+                <div style={{ fontSize: 10, color: "#ce93d8" }}>Frame issues: {framingIssueCount}</div>
+              </div>
+            </div>
+
             <div style={{ marginTop: 15 }}>
               {!recording && (
                 <div style={{ display: "flex", gap: 8, marginBottom: 10, justifyContent: "center" }}>
@@ -649,18 +901,18 @@ function App() {
               )}
               {!recording ? (
                 <button onClick={startRecording} style={{ width: "100%", padding: "14px", fontSize: 16, background: "linear-gradient(135deg,#4CAF50,#2e7d32)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 700, letterSpacing: 0.3, boxShadow: "0 4px 20px rgba(76,175,80,0.4)" }}>
-                  ??? Start Interview
+                  🎬 Start Interview
                 </button>
               ) : (
                 <button onClick={stopRecording} style={{ width: "100%", padding: "14px", fontSize: 16, background: "linear-gradient(135deg,#f44336,#b71c1c)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 700, letterSpacing: 0.3, boxShadow: "0 4px 20px rgba(244,67,54,0.4)" }}>
-                  ?? Stop & Get Feedback
+                  ⏹️ Stop & Get Feedback
                 </button>
               )}
             </div>
 
             {recording && showTips && (
               <div style={{ ...glass, marginTop: 12, padding: 15, border: `1px solid ${t.cardBorder}`, background: darkMode ? "rgba(10,15,35,0.72)" : "rgba(255,255,255,0.75)" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#43e97b", marginBottom: 6 }}>?? Live Interview Tips</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#43e97b", marginBottom: 6 }}>💡 Live Interview Tips</div>
                 <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5, fontSize: 13 }}>
                   <li>Keep your shoulders relaxed and face the camera squarely.</li>
                   <li>Speak with a clear pace and avoid rushing to fill silence.</li>
@@ -674,7 +926,7 @@ function App() {
 
           <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
             <div style={{ ...glass, padding: 20, flex: 1 }}>
-              <div style={{ fontSize: 11, color: t.subtext, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Live Transcription</div>
+              <div style={{ fontSize: 11, color: t.subtext, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>📝 Live Transcription</div>
               <div ref={transcriptBoxRef} style={{ color: t.subtext, lineHeight: 1.7, minHeight: 120, maxHeight: 200, overflowY: "auto", overflowX: "hidden", margin: 0, fontSize: 14, paddingRight: 6, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
                 {fullTranscript ? (
                   <p style={{ margin: 0, color: t.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -697,10 +949,37 @@ function App() {
               )}
             </div>
 
+            <div style={{ ...glass, padding: 16 }}>
+              <div style={{ fontSize: 11, color: t.subtext, marginBottom: 10, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>⏱️ Speaking Pace Zones</div>
+              {paceTimeline.length === 0 ? (
+                <div style={{ fontSize: 12, color: t.subtext }}>Start speaking to see pace timeline.</div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 8, fontSize: 10, color: t.subtext, flexWrap: "wrap" }}>
+                    <span style={{ color: "#43e97b" }}>Ideal: 100-150 WPM</span>
+                    <span style={{ color: "#ffb74d" }}>Slow: under 100</span>
+                    <span style={{ color: "#ef5350" }}>Fast: above 150</span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                  {paceTimeline.map((point, idx) => {
+                    const zoneColor = point.zone === "ideal" ? "#43e97b" : point.zone === "fast" ? "#f44336" : "#ffb74d";
+                    return (
+                      <div key={`${point.t}-${idx}`} style={{ minWidth: 58, textAlign: "center", border: `1px solid ${zoneColor}55`, background: `${zoneColor}18`, borderRadius: 10, padding: "6px 4px" }}>
+                        <div style={{ fontSize: 11, color: zoneColor, fontWeight: 700 }}>{point.wpm}</div>
+                        <div style={{ fontSize: 9, color: t.subtext }}>{point.zone}</div>
+                        <div style={{ fontSize: 9, color: t.subtext }}>{point.t}</div>
+                      </div>
+                    );
+                  })}
+                  </div>
+                </>
+              )}
+            </div>
+
             <div style={{ ...glass, padding: 20 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ fontSize: 11, color: t.subtext, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>?? Score Trend</div>
+                  <div style={{ fontSize: 11, color: t.subtext, textTransform: "uppercase", letterSpacing: 1.5, fontWeight: 600 }}>📈 Score Trend</div>
                   <span style={{ background: "rgba(76,175,80,0.15)", color: "#4CAF50", padding: "2px 9px", borderRadius: 12, fontSize: 10, fontWeight: 700 }}>{sessions.length} sessions</span>
                 </div>
                 <button onClick={resetSessions} style={{ fontSize: 12, background: "transparent", border: "1px solid #f44336", color: "#f44336", padding: "4px 12px", borderRadius: 20, cursor: "pointer" }}>
@@ -725,7 +1004,7 @@ function App() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div style={{ textAlign: "center", padding: "20px 0", color: t.subtext, fontSize: 13 }}>Complete 2+ sessions to see your trend ??</div>
+                <div style={{ textAlign: "center", padding: "20px 0", color: t.subtext, fontSize: 13 }}>Complete 2+ sessions to see your trend 📊</div>
               )}
 
               <div style={{ marginTop: 12, maxHeight: 130, overflowY: "auto" }}>
@@ -769,15 +1048,15 @@ function App() {
 
         {scorecard && (
           <div className="fade-in-scale" style={{ ...glass, border: "1px solid rgba(76,175,80,0.3)", padding: 30, marginTop: 25 }}>
-            <h2 style={{ margin: "0 0 24px", fontWeight: 800, fontSize: 22, letterSpacing: "-0.5px", background: "linear-gradient(90deg,#43e97b,#4facfe)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>?? Post-Interview Scorecard</h2>
+            <h2 style={{ margin: "0 0 24px", fontWeight: 800, fontSize: 22, letterSpacing: "-0.5px", background: "linear-gradient(90deg,#43e97b,#4facfe)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>📋 Post-Interview Scorecard</h2>
 
             <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
-              {[
-                { label: "Grade", value: scorecard.grade || "B", bg: gradeGradient(scorecard.grade), icon: "??" },
-                { label: "Total Score", value: totalScoreUI, bg: "linear-gradient(135deg,#4facfe,#00f2fe)", icon: "?" },
-                { label: "Eye Contact", value: `${parseFloat(scorecard.eye_contact || 0).toFixed(1)}%`, bg: "linear-gradient(135deg,#f7971e,#ffd200)", icon: "???" },
-                { label: "WPM", value: parseFloat(scorecard.wpm || 0).toFixed(1), bg: "linear-gradient(135deg,#a18cd1,#fbc2eb)", icon: "??" },
-                { label: "Filler Words", value: scorecard.filler_count || 0, bg: "linear-gradient(135deg,#f44336,#ff6b6b)", icon: "??" },
+                {[
+                  { label: "Grade", value: scorecard.grade || "B", bg: gradeGradient(scorecard.grade), icon: "🏅" },
+                { label: "Total Score", value: totalScoreUI, bg: "linear-gradient(135deg,#4facfe,#00f2fe)", icon: "🎯" },
+                { label: "Eye Contact", value: `${parseFloat(scorecard.eye_contact || 0).toFixed(1)}%`, bg: "linear-gradient(135deg,#f7971e,#ffd200)", icon: "👁️" },
+                { label: "WPM", value: parseFloat(scorecard.wpm || 0).toFixed(1), bg: "linear-gradient(135deg,#a18cd1,#fbc2eb)", icon: "🗣️" },
+                { label: "Filler Words", value: scorecard.filler_count || 0, bg: "linear-gradient(135deg,#f44336,#ff6b6b)", icon: "🧩" },
               ].map((item, i) => (
                 <div key={item.label} className="score-card-item" style={{ background: item.bg, color: "white", padding: "18px 22px", borderRadius: 16, textAlign: "center", minWidth: 105, boxShadow: "0 6px 24px rgba(0,0,0,0.25)", animationDelay: `${i * 0.08}s` }}>
                   <div style={{ fontSize: 18, marginBottom: 4 }}>{item.icon}</div>
@@ -786,6 +1065,12 @@ function App() {
                 </div>
               ))}
             </div>
+
+            {typeof scorecard.score_delta === "number" && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 12, border: `1px solid ${scorecard.score_delta >= 0 ? "rgba(67,233,123,0.4)" : "rgba(244,67,54,0.4)"}`, background: scorecard.score_delta >= 0 ? "rgba(67,233,123,0.12)" : "rgba(244,67,54,0.12)", color: scorecard.score_delta >= 0 ? "#43e97b" : "#ef5350", fontWeight: 700, fontSize: 13 }}>
+                Re-answer comparison: {scorecard.previous_score}/100 -> {scorecard.total_score}/100 ({scorecard.score_delta >= 0 ? "+" : ""}{scorecard.score_delta})
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
               { ["STAR", "Radar", "Tips"].map(tab => (
@@ -798,7 +1083,7 @@ function App() {
             {scorecardTab === "STAR" && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 25 }}>
                 <div>
-                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>? STAR Breakdown</h3>
+                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>⭐ STAR Breakdown</h3>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     {["situation", "task", "action", "result"].map((key, i) => {
                       const score = scorecard[`${key}_score`] || 0;
@@ -819,13 +1104,13 @@ function App() {
                     })}
                   </div>
                   <div style={{ marginTop: 14, background: t.feedbackBg, padding: 16, borderRadius: 14, border: `1px solid rgba(76,175,80,0.2)` }}>
-                    <div style={{ color: "#43e97b", marginBottom: 8, fontWeight: 700, fontSize: 13 }}>?? Overall Feedback</div>
+                    <div style={{ color: "#43e97b", marginBottom: 8, fontWeight: 700, fontSize: 13 }}>✅ Overall Feedback</div>
                     <p style={{ color: t.subtext, lineHeight: 1.7, margin: 0, fontSize: 13 }}>{scorecard.overall_feedback}</p>
                   </div>
                 </div>
 
                 <div style={{ ...glass, padding: 20 }}>
-                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>?? General Improvement Tips</h3>
+                  <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>🧠 General Improvement Tips</h3>
                   <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5 }}>
                     <li>Keep responses structured in STAR format.</li>
                     <li>Look at the camera and maintain steady pace.</li>
@@ -839,7 +1124,7 @@ function App() {
 
             {scorecardTab === "Radar" && (
               <div>
-                <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>?? Performance Radar</h3>
+                <h3 style={{ marginBottom: 15, fontWeight: 700, fontSize: 16 }}>🎯 Performance Radar</h3>
                 <ResponsiveContainer width="100%" height={320}>
                   <RadarChart data={radarData}>
                     <PolarGrid stroke={darkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"} />
@@ -859,7 +1144,7 @@ function App() {
 
             {scorecardTab === "Tips" && (
               <div style={{ ...glass, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ fontWeight: 700, color: "#4CAF50" }}>?? Quick Tips While Recording</div>
+                <div style={{ fontWeight: 700, color: "#4CAF50" }}>⚡ Quick Tips While Recording</div>
                 <ul style={{ margin: 0, paddingLeft: 18, color: t.subtext, lineHeight: 1.5 }}>
                   <li>Maintain eye contact with the camera for at least 70% of the time.</li>
                   <li>Use the STAR format: Situation, Task, Action, Result.</li>
@@ -872,6 +1157,28 @@ function App() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {(followupQuestion || followupLoading) && (
+          <div className="fade-in-up" style={{ ...glass, marginTop: 18, padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#4facfe" }}>🧠 AI Follow-up Round {followupRound || 1}</div>
+              <div style={{ fontSize: 11, color: t.subtext }}>
+                Progress: {Math.min(followupRound || 1, 3)}/3
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => fetchFollowupQuestion(Math.max(1, followupRound + 1))} disabled={followupLoading || followupRound >= 3} style={{ border: "1px solid rgba(79,172,254,0.45)", background: "rgba(79,172,254,0.16)", color: "#4facfe", borderRadius: 10, padding: "6px 10px", fontSize: 12, cursor: followupLoading || followupRound >= 3 ? "not-allowed" : "pointer", opacity: followupLoading || followupRound >= 3 ? 0.5 : 1 }}>
+                  Next Round
+                </button>
+                <button onClick={() => fetchFollowupQuestion(1)} disabled={followupLoading} style={{ border: "1px solid rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.08)", color: t.text, borderRadius: 10, padding: "6px 10px", fontSize: 12, cursor: followupLoading ? "not-allowed" : "pointer", opacity: followupLoading ? 0.5 : 1 }}>
+                  Regenerate
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: 14, color: t.text, lineHeight: 1.6 }}>
+              {followupLoading ? "Generating follow-up..." : followupQuestion}
+            </div>
           </div>
         )}
       </div>

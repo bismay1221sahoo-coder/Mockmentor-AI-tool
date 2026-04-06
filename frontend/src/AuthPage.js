@@ -125,14 +125,14 @@ const s = {
   },
 };
 
-export default function AuthPage({ onLogin, darkMode }) {
+export default function AuthPage({ onLogin }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ name: "", email: "", password: "", security_question: SECURITY_QUESTIONS[0], security_answer: "" });
-  const [forgot, setForgot] = useState({ email: "", security_question: "", security_answer: "", new_password: "" });
+  const [forgot, setForgot] = useState({ email: "", otp: "", new_password: "", dev_otp: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const isOk = error.startsWith("✅");
+  const isOk = error.startsWith("OK:");
 
   const handleLogin = async (e) => {
     e.preventDefault(); setError(""); setLoading(true);
@@ -155,19 +155,24 @@ export default function AuthPage({ onLogin, darkMode }) {
       const res = await fetch(`${BASE}/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || "Registration failed"); setLoading(false); return; }
-      setMode("login"); setError("✅ Registered! Please login.");
+      setMode("login"); setError("OK: Registered! Please login.");
     } catch { setError("Server error."); }
     setLoading(false);
   };
 
-  const handleGetQuestion = async (e) => {
+  const handleRequestOtp = async (e) => {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const res = await fetch(`${BASE}/security-question?email=${forgot.email}`);
+      const res = await fetch(`${BASE}/forgot-password/request-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: forgot.email }),
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || "Email not found"); setLoading(false); return; }
-      setForgot(p => ({ ...p, security_question: data.security_question }));
+      setForgot((p) => ({ ...p, dev_otp: data.dev_otp || "", otp: "", new_password: "" }));
       setMode("reset");
+      setError("OK: OTP sent. Check your email.");
     } catch { setError("Server error."); }
     setLoading(false);
   };
@@ -175,10 +180,16 @@ export default function AuthPage({ onLogin, darkMode }) {
   const handleReset = async (e) => {
     e.preventDefault(); setError(""); setLoading(true);
     try {
-      const res = await fetch(`${BASE}/forgot-password`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: forgot.email, security_answer: forgot.security_answer, new_password: forgot.new_password }) });
+      const res = await fetch(`${BASE}/forgot-password/verify-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: forgot.email, otp: forgot.otp, new_password: forgot.new_password }),
+      });
       const data = await res.json();
       if (!res.ok) { setError(data.detail || "Reset failed"); setLoading(false); return; }
-      setMode("login"); setError("✅ Password reset! Please login.");
+      setMode("login");
+      setForgot({ email: "", otp: "", new_password: "", dev_otp: "" });
+      setError("OK: Password reset! Please login.");
     } catch { setError("Server error."); }
     setLoading(false);
   };
@@ -190,13 +201,13 @@ export default function AuthPage({ onLogin, darkMode }) {
 
       <motion.div style={s.card} initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
         <div style={s.logo}>
-          <motion.div style={s.logoIcon} whileHover={{ scale: 1.05 }}>🎯</motion.div>
+          <motion.div style={s.logoIcon} whileHover={{ scale: 1.05 }}>MM</motion.div>
           <div style={s.title}>MockMentor AI</div>
           <div style={s.subtitle}>
-            {mode === "login" && "Welcome back — let's practice"}
+            {mode === "login" && "Welcome back - let's practice"}
             {mode === "signup" && "Create your account"}
-            {mode === "forgot" && "Recover your account"}
-            {mode === "reset" && "Set a new password"}
+            {mode === "forgot" && "Recover your account with OTP"}
+            {mode === "reset" && "Enter OTP and set a new password"}
           </div>
         </div>
 
@@ -214,19 +225,15 @@ export default function AuthPage({ onLogin, darkMode }) {
               <form onSubmit={handleLogin}>
                 <div style={s.field}>
                   <label style={s.label}>Email</label>
-                  <input style={s.input} type="email" placeholder="you@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <input style={s.input} type="email" placeholder="you@example.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Password</label>
-                  <input style={s.input} type="password" placeholder="••••••••" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <input style={s.input} type="password" placeholder="********" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
                 </div>
                 {error && <div style={s.error(isOk)}>{error}</div>}
                 <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
-                  {loading ? "Signing in..." : "Sign In →"}
+                  {loading ? "Signing in..." : "Sign In ->"}
                 </motion.button>
                 <div style={s.divider}>
                   <span style={s.link} onClick={() => { setMode("forgot"); setError(""); }}>Forgot password?</span>
@@ -239,13 +246,11 @@ export default function AuthPage({ onLogin, darkMode }) {
                 {[
                   { label: "Full Name", key: "name", type: "text", ph: "John Doe" },
                   { label: "Email", key: "email", type: "email", ph: "you@example.com" },
-                  { label: "Password", key: "password", type: "password", ph: "••••••••" },
+                  { label: "Password", key: "password", type: "password", ph: "********" },
                 ].map(f => (
                   <div key={f.key} style={s.field}>
                     <label style={s.label}>{f.label}</label>
-                    <input style={s.input} type={f.type} placeholder={f.ph} value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} required
-                      onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                      onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                    <input style={s.input} type={f.type} placeholder={f.ph} value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} required />
                   </div>
                 ))}
                 <div style={s.field}>
@@ -256,56 +261,53 @@ export default function AuthPage({ onLogin, darkMode }) {
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Your Answer</label>
-                  <input style={s.input} placeholder="Answer" value={form.security_answer} onChange={e => setForm({ ...form, security_answer: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <input style={s.input} placeholder="Answer" value={form.security_answer} onChange={e => setForm({ ...form, security_answer: e.target.value })} required />
                 </div>
                 {error && <div style={s.error(isOk)}>{error}</div>}
                 <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
-                  {loading ? "Creating account..." : "Create Account →"}
+                  {loading ? "Creating account..." : "Create Account ->"}
                 </motion.button>
               </form>
             )}
 
             {mode === "forgot" && (
-              <form onSubmit={handleGetQuestion}>
+              <form onSubmit={handleRequestOtp}>
                 <div style={{ fontSize: 13, color: "#6b6b8a", marginBottom: 20, lineHeight: 1.6 }}>
-                  Enter your registered email and we'll show your security question.
+                  Enter your registered email and we will send a password reset OTP.
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Email</label>
-                  <input style={s.input} type="email" placeholder="you@example.com" value={forgot.email} onChange={e => setForgot({ ...forgot, email: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(6,182,212,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <input style={s.input} type="email" placeholder="you@example.com" value={forgot.email} onChange={e => setForgot({ ...forgot, email: e.target.value })} required />
                 </div>
                 {error && <div style={s.error(isOk)}>{error}</div>}
                 <motion.button type="submit" style={{ ...s.btnSecondary, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
-                  {loading ? "Checking..." : "Continue →"}
+                  {loading ? "Sending OTP..." : "Send OTP ->"}
                 </motion.button>
                 <div style={s.divider}>
-                  <span style={s.link} onClick={() => { setMode("login"); setError(""); }}>← Back to login</span>
+                  <span style={s.link} onClick={() => { setMode("login"); setError(""); }}>{"<- Back to login"}</span>
                 </div>
               </form>
             )}
 
             {mode === "reset" && (
               <form onSubmit={handleReset}>
-                <div style={s.securityBox}>🔐 {forgot.security_question}</div>
+                <div style={s.securityBox}>OTP sent to: {forgot.email}</div>
+                {forgot.dev_otp && (
+                  <div style={{ ...s.securityBox, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.25)", color: "#c4b5fd" }}>
+                    Dev OTP: <strong>{forgot.dev_otp}</strong>
+                  </div>
+                )}
                 <div style={s.field}>
-                  <label style={s.label}>Your Answer</label>
-                  <input style={s.input} placeholder="Answer" value={forgot.security_answer} onChange={e => setForgot({ ...forgot, security_answer: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <label style={s.label}>OTP Code</label>
+                  <input style={s.input} placeholder="6-digit OTP" value={forgot.otp} onChange={e => setForgot({ ...forgot, otp: e.target.value })} required />
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>New Password</label>
-                  <input style={s.input} type="password" placeholder="••••••••" value={forgot.new_password} onChange={e => setForgot({ ...forgot, new_password: e.target.value })} required
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <input style={s.input} type="password" placeholder="********" value={forgot.new_password} onChange={e => setForgot({ ...forgot, new_password: e.target.value })} required />
                 </div>
                 {error && <div style={s.error(isOk)}>{error}</div>}
                 <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
-                  {loading ? "Resetting..." : "Reset Password →"}
+                  {loading ? "Resetting..." : "Reset Password ->"}
                 </motion.button>
               </form>
             )}
