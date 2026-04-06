@@ -255,7 +255,8 @@ function App() {
     if (token && !user) {
       fetch("http://localhost:8000/me", { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.ok ? res.json() : null)
-        .then(data => { if (data) setUser(data); else handleLogout(); });
+        .then(data => { if (data) setUser(data); else handleLogout(); })
+        .catch(() => {});
     }
   }, [token]);
 
@@ -283,7 +284,8 @@ function App() {
       .then(data => {
         setQuestion(data.question);
         setQuestionCategory(data.role || categories[Math.floor(Math.random() * categories.length)]);
-      });
+      })
+      .catch(() => {});
     fetchSessions(token);
   }, [token, selectedRole, selectedDifficulty]);
 
