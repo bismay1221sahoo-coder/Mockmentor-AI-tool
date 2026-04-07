@@ -130,6 +130,7 @@ export default function AuthPage({ onLogin }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ name: "", email: "", password: "", security_question: SECURITY_QUESTIONS[0], security_answer: "" });
   const [forgot, setForgot] = useState({ email: "", otp: "", new_password: "", dev_otp: "" });
+  const [securityReset, setSecurityReset] = useState({ email: "", security_question: "", security_answer: "", new_password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -195,6 +196,61 @@ export default function AuthPage({ onLogin }) {
     setLoading(false);
   };
 
+  const handleTryAnotherWay = async () => {
+    const email = (forgot.email || "").trim().toLowerCase();
+    if (!email) {
+      setError("Please enter your email first.");
+      return;
+    }
+
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE}/security-question?email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail || "Email not found");
+        setLoading(false);
+        return;
+      }
+      setSecurityReset({ email, security_question: data.security_question || "", security_answer: "", new_password: "" });
+      setMode("security-reset");
+    } catch {
+      setError("Server error.");
+    }
+    setLoading(false);
+  };
+
+  const handleSecurityReset = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch(`${BASE}/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: securityReset.email,
+          security_answer: securityReset.security_answer,
+          new_password: securityReset.new_password,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail || "Reset failed");
+        setLoading(false);
+        return;
+      }
+      setMode("login");
+      setForgot({ email: "", otp: "", new_password: "", dev_otp: "" });
+      setSecurityReset({ email: "", security_question: "", security_answer: "", new_password: "" });
+      setError("OK: Password reset! Please login.");
+    } catch {
+      setError("Server error.");
+    }
+    setLoading(false);
+  };
+
   return (
     <div style={s.page}>
       <div style={s.orb1} />
@@ -209,6 +265,7 @@ export default function AuthPage({ onLogin }) {
             {mode === "signup" && "Create your account"}
             {mode === "forgot" && "Recover your account with OTP"}
             {mode === "reset" && "Enter OTP and set a new password"}
+            {mode === "security-reset" && "Recover with security question"}
           </div>
         </div>
 
@@ -285,6 +342,9 @@ export default function AuthPage({ onLogin }) {
                   {loading ? "Sending OTP..." : "Send OTP ->"}
                 </motion.button>
                 <div style={s.divider}>
+                  <span style={s.link} onClick={handleTryAnotherWay}>Try another way</span>
+                </div>
+                <div style={s.divider}>
                   <span style={s.link} onClick={() => { setMode("login"); setError(""); }}>{"<- Back to login"}</span>
                 </div>
               </form>
@@ -310,6 +370,47 @@ export default function AuthPage({ onLogin }) {
                 <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
                   {loading ? "Resetting..." : "Reset Password ->"}
                 </motion.button>
+                <div style={s.divider}>
+                  <span style={s.link} onClick={handleTryAnotherWay}>Try another way</span>
+                </div>
+              </form>
+            )}
+
+            {mode === "security-reset" && (
+              <form onSubmit={handleSecurityReset}>
+                <div style={s.securityBox}>Email: {securityReset.email}</div>
+                <div style={s.field}>
+                  <label style={s.label}>Security Question</label>
+                  <input style={s.input} value={securityReset.security_question} readOnly />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Type your answer</label>
+                  <input
+                    style={s.input}
+                    placeholder="Type your answer"
+                    value={securityReset.security_answer}
+                    onChange={e => setSecurityReset({ ...securityReset, security_answer: e.target.value })}
+                    required
+                  />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>New Password</label>
+                  <input
+                    style={s.input}
+                    type="password"
+                    placeholder="********"
+                    value={securityReset.new_password}
+                    onChange={e => setSecurityReset({ ...securityReset, new_password: e.target.value })}
+                    required
+                  />
+                </div>
+                {error && <div style={s.error(isOk)}>{error}</div>}
+                <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
+                  {loading ? "Verifying..." : "Verify & Reset ->"}
+                </motion.button>
+                <div style={s.divider}>
+                  <span style={s.link} onClick={() => { setMode("forgot"); setError(""); }}>{"<- Back to OTP reset"}</span>
+                </div>
               </form>
             )}
 
