@@ -260,6 +260,7 @@ export default function AuthPage({ onLogin }) {
         <div style={s.logo}>
           <motion.div style={s.logoIcon} whileHover={{ scale: 1.05 }}>MM</motion.div>
           <div style={s.title}>MockMentor AI</div>
+          <div style={{ fontSize: 11, color: "#8b8bb1", marginTop: -1, marginBottom: 4 }}>by Bismay Sahoo</div>
           <div style={s.subtitle}>
             {mode === "login" && "Welcome back - let's practice"}
             {mode === "signup" && "Create your account"}
