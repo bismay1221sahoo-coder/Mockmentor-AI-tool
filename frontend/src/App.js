@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
+﻿import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import AuthPage from "./AuthPage";
 import ProfilePage from "./ProfilePage";
 import HistoryPage from "./HistoryPage";
@@ -1193,3 +1193,4 @@ function App() {
 }
 
 export default App;
+ 
