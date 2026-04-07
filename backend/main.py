@@ -1,10 +1,13 @@
 from collections import defaultdict, deque
 from datetime import datetime, timezone, timedelta
 from difflib import SequenceMatcher
+from email.message import EmailMessage
 import json
 import os
 import random
+import smtplib
 import sqlite3
+import ssl
 import string
 import types
 
@@ -29,6 +32,11 @@ APP_ENV = os.getenv("APP_ENV", "development").lower()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
 
 if APP_ENV == "production" and (not SECRET_KEY or SECRET_KEY == "supersecretkey_changeme"):
     raise RuntimeError("SECRET_KEY must be set to a strong value in production.")
@@ -203,6 +211,38 @@ def normalize_difficulty(difficulty: str):
 
 def generate_otp_code():
     return "".join(random.choice(string.digits) for _ in range(6))
+
+
+def send_reset_otp_email(recipient_email: str, otp: str):
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASS or not SMTP_FROM:
+        return False, "SMTP is not configured"
+
+    msg = EmailMessage()
+    msg["Subject"] = "MockMentor AI - Password Reset OTP"
+    msg["From"] = SMTP_FROM
+    msg["To"] = recipient_email
+    msg.set_content(
+        "\n".join(
+            [
+                "Hi,",
+                "",
+                f"Your MockMentor AI password reset OTP is: {otp}",
+                "It is valid for 10 minutes.",
+                "",
+                "If you did not request this, you can ignore this email.",
+                "",
+                "Regards,",
+                "MockMentor AI",
+            ]
+        )
+    )
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        server.starttls(context=context)
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
+    return True, ""
 
 
 class UserRegister(BaseModel):
@@ -403,11 +443,20 @@ async def request_reset_otp(data: dict, request: Request):
         c.execute("UPDATE users SET otp_code = ?, otp_expiry = ? WHERE id = ?", (otp, expiry, user[0]))
         conn.commit()
 
-    # Placeholder delivery: integrate SMTP/provider in production.
-    print(f"[OTP] Password reset OTP for {email}: {otp}")
+    sent = False
+    send_error = ""
+    try:
+        sent, send_error = send_reset_otp_email(email, otp)
+    except Exception as e:
+        send_error = str(e)
+    if not sent:
+        print(f"[OTP] Email send failed for {email}: {send_error}")
+        if APP_ENV == "production":
+            raise HTTPException(status_code=500, detail="Failed to send OTP email. Please try another way.")
+        print(f"[OTP] Dev fallback OTP for {email}: {otp}")
 
     payload = {"message": "OTP sent successfully. Check your email.", "expires_in_minutes": 10}
-    if APP_ENV != "production":
+    if APP_ENV != "production" or not sent:
         payload["dev_otp"] = otp
     return payload
 
