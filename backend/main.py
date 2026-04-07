@@ -6,7 +6,9 @@ import os
 import random
 import sqlite3
 import string
+import types
 
+import bcrypt
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,11 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 
 load_dotenv()
+
+# passlib 1.7.x expects bcrypt.__about__.__version__, which is removed in bcrypt>=5.
+# Provide a tiny compatibility shim so password hash/verify keeps working in production.
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = types.SimpleNamespace(__version__=getattr(bcrypt, "__version__", ""))
 
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
