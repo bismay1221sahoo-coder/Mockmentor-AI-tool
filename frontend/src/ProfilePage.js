@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import { API_BASE } from "./config";
 
-const BASE = "http://localhost:8000";
+const BASE = API_BASE;
 
 const gradeColor = (g) => ({ A: "#10b981", B: "#06b6d4", C: "#f59e0b", D: "#ef4444", F: "#ef4444" }[g] || "#6b6b8a");
 

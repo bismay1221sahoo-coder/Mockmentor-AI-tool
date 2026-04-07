@@ -70,6 +70,7 @@ Create `backend/.env`:
 GROQ_API_KEY=your_groq_api_key
 SECRET_KEY=your_long_random_secret
 APP_ENV=development
+FRONTEND_ORIGIN=http://localhost:3000
 ```
 
 Run backend:
@@ -82,6 +83,12 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd ../frontend
 npm install
 npm start
+```
+
+For deploy builds, set frontend env:
+```env
+REACT_APP_API_BASE=https://your-backend-domain
+REACT_APP_WS_BASE=wss://your-backend-domain
 ```
 
 Frontend runs at `http://localhost:3000` and backend at `http://localhost:8000`.
@@ -117,6 +124,51 @@ npm run build
 cd ../backend
 python -m py_compile main.py
 ```
+
+## Deployment (Render + Vercel)
+### 1. Deploy Backend on Render first
+- Service type: `Web Service`
+- Root directory: `backend`
+- Build command:
+```bash
+pip install -r requirements.txt
+```
+- Start command:
+```bash
+uvicorn main:app --host 0.0.0.0 --port $PORT
+```
+
+Set Render environment variables:
+- `GROQ_API_KEY=...`
+- `SECRET_KEY=<long-random-secret>`
+- `APP_ENV=production`
+- `FRONTEND_ORIGIN=https://<your-vercel-domain>`
+
+After deploy, test:
+- `GET https://<your-render-domain>/`
+- `GET https://<your-render-domain>/docs`
+
+### 2. Deploy Frontend on Vercel
+- Import repo in Vercel
+- Root directory: `frontend`
+- Framework preset: `Create React App` (auto)
+
+Set Vercel environment variables:
+- `REACT_APP_API_BASE=https://<your-render-domain>`
+- `REACT_APP_WS_BASE=wss://<your-render-domain>`
+
+Then click Deploy.
+
+### 3. Final linkage check
+- Open frontend URL and register/login
+- Start interview and confirm:
+  - Question loads
+  - WebSocket transcription works
+  - Evaluate returns score
+
+## Production Notes
+- Render free tier may sleep after inactivity (first request can be slow).
+- SQLite file on cloud instances is not ideal for long-term persistence; for demo/major-project viva this is acceptable, but production should use managed DB.
 
 ## Roadmap Ideas
 - Email provider integration for production OTP delivery

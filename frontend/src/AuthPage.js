@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { API_BASE } from "./config";
 
 const SECURITY_QUESTIONS = [
   "What was the name of your first pet?",
@@ -9,7 +10,7 @@ const SECURITY_QUESTIONS = [
   "What is your favorite childhood movie?",
 ];
 
-const BASE = "http://localhost:8000";
+const BASE = API_BASE;
 
 const s = {
   page: {

@@ -1,7 +1,8 @@
-﻿import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import AuthPage from "./AuthPage";
 import ProfilePage from "./ProfilePage";
 import HistoryPage from "./HistoryPage";
+import { API_BASE, WS_BASE } from "./config";
 import { FaceMesh } from "@mediapipe/face_mesh";
 import { Camera } from "@mediapipe/camera_utils";
 import { RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Area, AreaChart } from "recharts";
@@ -205,7 +206,7 @@ function App() {
     setTimeout(() => setToast(""), 3000);
   };
 
-  const authHeaders = { Authorization: `Bearer ${token}` };
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const handleLogin = (tok, me) => {
     localStorage.setItem("token", tok);
@@ -215,7 +216,7 @@ function App() {
 
   const refreshQuestion = () => {
     const categories = ["Behavioral", "Technical", "Situational", "HR"];
-    fetch(`http://localhost:8000/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
+    fetch(`${API_BASE}/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => {
         setQuestion(data.question);
@@ -225,12 +226,12 @@ function App() {
       .catch(() => showToast("Failed to refresh question"));
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     localStorage.removeItem("token");
     setToken("");
     setUser(null);
     setSessions([]);
-  };
+  }, []);
 
   useEffect(() => {
     if (!scorecard) {
@@ -253,33 +254,36 @@ function App() {
 
   useEffect(() => {
     if (token && !user) {
-      fetch("http://localhost:8000/me", { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => res.ok ? res.json() : null)
-        .then(data => { if (data) setUser(data); else handleLogout(); })
+        .then(data => {
+          if (data) setUser(data);
+          else handleLogout();
+        })
         .catch(() => {});
     }
-  }, [token]);
+  }, [token, user, handleLogout]);
 
-  const fetchSessions = (tok) => {
+  const fetchSessions = useCallback((tok) => {
     const headers = { Authorization: `Bearer ${tok || token}` };
-    fetch("http://localhost:8000/sessions?limit=120", { headers })
+    fetch(`${API_BASE}/sessions?limit=120`, { headers })
       .then(res => res.json())
       .then(data => setSessions(data.sessions || []))
       .catch(() => {});
-    fetch("http://localhost:8000/streak", { headers })
+    fetch(`${API_BASE}/streak`, { headers })
       .then(res => res.json())
       .then(data => setStreak(data.streak || 0))
       .catch(() => {});
-    fetch("http://localhost:8000/analytics", { headers })
+    fetch(`${API_BASE}/analytics`, { headers })
       .then(res => res.json())
       .then(data => setAnalytics(data || { total_sessions: 0, weekly_average: 0, trend_slope: 0, consistency_score: 0, series: [] }))
       .catch(() => {});
-  };
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
     const categories = ["Behavioral", "Technical", "Situational", "HR"];
-    fetch(`http://localhost:8000/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
+    fetch(`${API_BASE}/question?role=${encodeURIComponent(selectedRole)}&difficulty=${encodeURIComponent(selectedDifficulty)}`, { headers: authHeaders })
       .then(res => res.json())
       .then(data => {
         setQuestion(data.question);
@@ -287,7 +291,7 @@ function App() {
       })
       .catch(() => {});
     fetchSessions(token);
-  }, [token, selectedRole, selectedDifficulty]);
+  }, [token, selectedRole, selectedDifficulty, authHeaders, fetchSessions]);
 
   const cleanTranscriptText = (rawText) => {
     const text = (rawText || "").trim().replace(/\s+/g, " ");
@@ -304,7 +308,7 @@ function App() {
     setFollowupLoading(true);
     try {
       const transcriptForFollowup = autoCleanTranscript ? cleanTranscriptText(fullTranscriptRef.current) : fullTranscriptRef.current;
-      const resp = await fetch("http://localhost:8000/followup", {
+      const resp = await fetch(`${API_BASE}/followup`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
@@ -430,7 +434,7 @@ function App() {
 
   useEffect(() => {
     recordingRef.current = recording;
-  }, [recording]);
+  }, [recording, selectedDuration]);
 
   useEffect(() => {
     if (recording) {
@@ -449,7 +453,7 @@ function App() {
       clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
-  }, [recording]);
+  }, [recording, selectedDuration]);
 
   const formatTime = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
@@ -487,7 +491,7 @@ function App() {
     recorderRef.current = recorder;
     chunksRef.current = [];
 
-    const ws = new WebSocket("ws://localhost:8000/ws");
+    const ws = new WebSocket(`${WS_BASE}/ws`);
     wsRef.current = ws;
 
     const countFillers = (text) => {
@@ -573,7 +577,7 @@ function App() {
     }
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/evaluate", {
+      const res = await fetch(`${API_BASE}/evaluate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ question, transcript: transcriptToEvaluate, eye_contact: eyeContactPct, filler_count: fillerCount, wpm }),
@@ -597,7 +601,7 @@ function App() {
   };
 
   const resetSessions = async () => {
-    await fetch("http://localhost:8000/sessions/reset", { method: "DELETE", headers: authHeaders });
+    await fetch(`${API_BASE}/sessions/reset`, { method: "DELETE", headers: authHeaders });
     setSessions([]);
   };
 

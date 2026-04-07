@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import jsPDF from "jspdf";
+import { API_BASE } from "./config";
 
-const BASE = "http://localhost:8000";
+const BASE = API_BASE;
 
 const gradeColor = (g) => ({ A: "#10b981", B: "#06b6d4", C: "#f59e0b", D: "#ef4444", F: "#ef4444" }[g] || "#6b6b8a");
 const gradeGlow = (g) => ({ A: "rgba(16,185,129,0.3)", B: "rgba(6,182,212,0.3)", C: "rgba(245,158,11,0.3)", D: "rgba(239,68,68,0.3)", F: "rgba(239,68,68,0.3)" }[g] || "transparent");

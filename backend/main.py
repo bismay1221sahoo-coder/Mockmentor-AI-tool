@@ -18,9 +18,15 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey_changeme")
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+
+if APP_ENV == "production" and (not SECRET_KEY or SECRET_KEY == "supersecretkey_changeme"):
+    raise RuntimeError("SECRET_KEY must be set to a strong value in production.")
+if not SECRET_KEY:
+    SECRET_KEY = "supersecretkey_changeme"
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -28,15 +34,21 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 app = FastAPI()
 
+frontend_origin_env = os.getenv("FRONTEND_ORIGIN", "").strip()
+if frontend_origin_env:
+    allowed_origins = [origin.strip() for origin in frontend_origin_env.split(",") if origin.strip()]
+elif APP_ENV == "production":
+    raise RuntimeError("FRONTEND_ORIGIN must be set in production (comma-separated origins).")
+else:
+    allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-APP_ENV = os.getenv("APP_ENV", "development").lower()
 
 # In-memory rate limit store: {bucket: {key: {"hits": deque[timestamp], "blocked_until": datetime|None}}}
 RATE_LIMIT_STORE = defaultdict(dict)
