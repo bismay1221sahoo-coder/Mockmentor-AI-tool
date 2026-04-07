@@ -42,16 +42,22 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 app = FastAPI()
 
 frontend_origin_env = os.getenv("FRONTEND_ORIGIN", "").strip()
+frontend_origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", "").strip()
 if frontend_origin_env:
-    allowed_origins = [origin.strip() for origin in frontend_origin_env.split(",") if origin.strip()]
+    allowed_origins = [origin.strip().rstrip("/") for origin in frontend_origin_env.split(",") if origin.strip()]
 elif APP_ENV == "production":
     raise RuntimeError("FRONTEND_ORIGIN must be set in production (comma-separated origins).")
 else:
     allowed_origins = ["*"]
 
+# Helpful default for Vercel monorepo/student deployments where preview URLs vary by commit.
+if APP_ENV == "production" and not frontend_origin_regex:
+    frontend_origin_regex = r"https://.*\.vercel\.app"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=frontend_origin_regex or None,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
