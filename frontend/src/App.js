@@ -536,37 +536,41 @@ function App() {
       return { total, breakdown };
     };
 
-    const normalizeForMatch = (text) => (text || "").toLowerCase().replace(/\s+/g, " ").trim();
-
     const mergeTranscriptChunk = (previousText, incomingText) => {
       const prev = (previousText || "").trim();
       const next = (incomingText || "").trim();
       if (!next) return prev;
       if (!prev) return next;
 
-      const prevNorm = normalizeForMatch(prev);
-      const nextNorm = normalizeForMatch(next);
+      const prevNorm = prev.toLowerCase().replace(/\s+/g, " ").trim();
+      const nextNorm = next.toLowerCase().replace(/\s+/g, " ").trim();
 
       if (nextNorm === prevNorm) return prev;
       if (nextNorm.startsWith(prevNorm)) return next;
       if (prevNorm.startsWith(nextNorm)) return prev;
 
-      // If the new chunk is already mostly contained in the previous transcript, skip it.
-      if (prevNorm.includes(nextNorm) && nextNorm.length > 20) return prev;
+      // Word-based suffix/prefix overlap merge to keep spacing intact.
+      const prevWords = prevNorm.split(" ");
+      const nextWords = nextNorm.split(" ");
+      const nextOriginalWords = next.replace(/\s+/g, " ").trim().split(" ");
+      const maxWordOverlap = Math.min(prevWords.length, nextWords.length);
+      let overlapWords = 0;
 
-      // Suffix-prefix overlap merge to avoid repeated chunks.
-      const maxOverlap = Math.min(prevNorm.length, nextNorm.length);
-      let overlap = 0;
-      for (let size = maxOverlap; size >= 15; size -= 1) {
-        if (prevNorm.slice(-size) === nextNorm.slice(0, size)) {
-          overlap = size;
+      for (let size = maxWordOverlap; size >= 4; size -= 1) {
+        const prevTail = prevWords.slice(-size).join(" ");
+        const nextHead = nextWords.slice(0, size).join(" ");
+        if (prevTail === nextHead) {
+          overlapWords = size;
           break;
         }
       }
 
-      if (overlap > 0) {
-        return `${prev} ${next.slice(overlap).trim()}`.replace(/\s+/g, " ").trim();
+      if (overlapWords > 0) {
+        const appendWords = nextOriginalWords.slice(overlapWords).join(" ").trim();
+        if (!appendWords) return prev;
+        return `${prev} ${appendWords}`.replace(/\s+/g, " ").trim();
       }
+
       return `${prev} ${next}`.replace(/\s+/g, " ").trim();
     };
 
