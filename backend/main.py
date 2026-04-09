@@ -209,6 +209,35 @@ def normalize_difficulty(difficulty: str):
     return "medium"
 
 
+def clamp_score(value: int, low: int, high: int):
+    return max(low, min(high, value))
+
+
+def score_to_grade(total_score: int):
+    # Project-friendly grade bands (requested: 25 should map to D, not C/F).
+    if total_score >= 85:
+        return "A"
+    if total_score >= 70:
+        return "B"
+    if total_score >= 55:
+        return "C"
+    if total_score >= 25:
+        return "D"
+    return "F"
+
+
+def is_behavioral_question(question: str):
+    q = (question or "").strip().lower()
+    triggers = [
+        "tell me about a time",
+        "describe a time",
+        "describe a situation",
+        "situation where",
+        "when you had to",
+    ]
+    return any(t in q for t in triggers)
+
+
 def generate_otp_code():
     return "".join(random.choice(string.digits) for _ in range(6))
 
@@ -834,6 +863,53 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
         except Exception:
             result = {"overall_feedback": raw, "total_score": 50, "grade": "B"}
 
+        # Normalize model scores to stable numeric bounds.
+        section_keys = ["situation_score", "task_score", "action_score", "result_score"]
+        section_scores = []
+        for key in section_keys:
+            try:
+                section_scores.append(clamp_score(int(round(float(result.get(key, 0)))), 0, 25))
+            except Exception:
+                section_scores.append(0)
+
+        if sum(section_scores) == 0:
+            # Fallback when model returns text-only or malformed JSON.
+            fallback_total = clamp_score(int(round(float(result.get("total_score", 50)))), 0, 100)
+            base = fallback_total // 4
+            remainder = fallback_total - base * 4
+            section_scores = [base, base, base, base]
+            for i in range(remainder):
+                section_scores[i] += 1
+            section_scores = [clamp_score(v, 0, 25) for v in section_scores]
+
+        total_score = clamp_score(sum(section_scores), 0, 100)
+
+        # Calibration: STAR-only harshness can underrate non-behavioral questions
+        # (e.g., "Why do you want this role?") even when answer quality is decent.
+        word_count = len((transcript or "").split())
+        if not is_behavioral_question(question) and word_count >= 55 and total_score < 60:
+            target = 60
+            scale = target / max(1, total_score)
+            boosted = [clamp_score(int(round(v * scale)), 0, 25) for v in section_scores]
+            # Keep exact target sum where possible.
+            cur = sum(boosted)
+            idx = 0
+            while cur < target and idx < 20:
+                j = idx % 4
+                if boosted[j] < 25:
+                    boosted[j] += 1
+                    cur += 1
+                idx += 1
+            section_scores = boosted
+            total_score = clamp_score(sum(section_scores), 0, 100)
+
+        result["situation_score"] = section_scores[0]
+        result["task_score"] = section_scores[1]
+        result["action_score"] = section_scores[2]
+        result["result_score"] = section_scores[3]
+        result["total_score"] = total_score
+        result["grade"] = score_to_grade(total_score)
+
         result["eye_contact"] = round(eye_contact, 1)
         result["filler_count"] = filler_count
         result["wpm"] = round(wpm, 1)
@@ -1041,6 +1117,10 @@ STAR Method:
 - Task: Did they explain their specific responsibility?
 - Action: Did they describe what THEY did, with specific steps?
 - Result: Did they mention the outcome with measurable impact?
+
+Important fairness rules:
+- If the question is non-behavioral (example: "Why do you want this role?"), still score fairly for clarity, relevance, specificity, and communication quality.
+- Do not over-penalize strong, coherent answers just because they are not strict STAR storytelling.
 
 Evaluate the answer and respond ONLY in this exact JSON format:
 {
