@@ -296,10 +296,36 @@ function App() {
   const cleanTranscriptText = (rawText) => {
     const text = (rawText || "").trim().replace(/\s+/g, " ");
     if (!text) return "";
-    let normalized = text
+
+    const withRecoveredSpaces = text
+      // Handle merged words like "Iaminterested" -> "I am interested"
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/([.!?])([A-Za-z])/g, "$1 $2")
+      .replace(/(\d)([A-Za-z])/g, "$1 $2")
+      .replace(/([A-Za-z])(\d)/g, "$1 $2");
+
+    let normalized = withRecoveredSpaces
       .replace(/\bi\b/g, "I")
       .replace(/\s+([,.!?])/g, "$1")
       .replace(/([a-z0-9])\s+([A-Z])/g, "$1. $2");
+
+    // Remove near-duplicate sentences introduced by streaming overlap.
+    const sentences = normalized
+      .split(/(?<=[.!?])\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const deduped = [];
+    const seen = new Set();
+    for (const sentence of sentences) {
+      const key = sentence.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(sentence);
+    }
+
+    normalized = deduped.join(" ").replace(/\s+/g, " ").trim();
     if (!/[.!?]$/.test(normalized)) normalized += ".";
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
   };
