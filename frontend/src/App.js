@@ -564,8 +564,8 @@ function App() {
     recorder.ondataavailable = (event) => {
       if (event.data.size < 100) return;
       chunksRef.current.push(event.data);
-      // Send only the latest chunk; full accumulation can cause repeated transcriptions.
-      const blob = event.data;
+      // Send accumulated WebM so each payload remains a valid decodable media file.
+      const blob = new Blob(chunksRef.current, { type: mimeType });
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(blob);
       }

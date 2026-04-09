@@ -952,21 +952,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 pass
 
     chunk_idx = 0
-    tasks = []
     try:
         while True:
             data = await websocket.receive_bytes()
             print(f"[WS] Chunk {chunk_idx}: {len(data)} bytes")
             if len(data) < 1000:
                 continue
-            task = asyncio.create_task(transcribe_and_send(data, chunk_idx))
-            tasks.append(task)
+            await transcribe_and_send(data, chunk_idx)
             chunk_idx += 1
     except Exception as e:
         print(f"[WS] Disconnected {session_id}: {e}")
-    finally:
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 INTERVIEW_QUESTIONS = [
