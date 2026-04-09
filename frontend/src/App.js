@@ -306,8 +306,7 @@ function App() {
 
     let normalized = withRecoveredSpaces
       .replace(/\bi\b/g, "I")
-      .replace(/\s+([,.!?])/g, "$1")
-      .replace(/([a-z0-9])\s+([A-Z])/g, "$1. $2");
+      .replace(/\s+([,.!?])/g, "$1");
 
     // Remove near-duplicate sentences introduced by streaming overlap.
     const sentences = normalized

@@ -935,23 +935,46 @@ async def websocket_endpoint(websocket: WebSocket):
 
         prev_words = prev.split()
         cur_words = cur.split()
-        max_prefix = min(len(prev_words), len(cur_words))
-        common = 0
-        while common < max_prefix and prev_words[common].lower() == cur_words[common].lower():
-            common += 1
+        prev_words_l = [w.lower() for w in prev_words]
+        cur_words_l = [w.lower() for w in cur_words]
 
-        if common == len(cur_words):
+        # Best case: strict prefix growth.
+        max_prefix = min(len(prev_words_l), len(cur_words_l))
+        common_prefix = 0
+        while common_prefix < max_prefix and prev_words_l[common_prefix] == cur_words_l[common_prefix]:
+            common_prefix += 1
+        if common_prefix == len(cur_words_l):
             return "", prev
-
-        if common > 0:
-            incremental = " ".join(cur_words[common:]).strip()
+        if common_prefix >= max(4, len(prev_words_l) - 2):
+            incremental = " ".join(cur_words[common_prefix:]).strip()
             return incremental, cur
 
-        # If whisper rephrases heavily, avoid repeating entire transcript.
-        # Send only when the new text is substantially different and longer.
-        if len(cur_words) > len(prev_words) + 3:
-            return cur, cur
-        return "", prev
+        # Robust fallback: align old transcript to new transcript and emit only tail delta.
+        sm = SequenceMatcher(None, prev_words_l, cur_words_l, autojunk=False)
+        blocks = sm.get_matching_blocks()
+
+        best_end_in_prev = -1
+        tail_start_in_cur = None
+        best_size = 0
+        for block in blocks:
+            if block.size <= 0:
+                continue
+            end_prev = block.a + block.size
+            if end_prev > best_end_in_prev or (end_prev == best_end_in_prev and block.size > best_size):
+                best_end_in_prev = end_prev
+                tail_start_in_cur = block.b + block.size
+                best_size = block.size
+
+        if tail_start_in_cur is None:
+            return "", prev
+        if tail_start_in_cur >= len(cur_words):
+            return "", cur
+
+        incremental_words = cur_words[tail_start_in_cur:]
+        incremental = " ".join(incremental_words).strip()
+        if not incremental:
+            return "", cur
+        return incremental, cur
 
     async def transcribe_and_send(data: bytes, idx: int):
         nonlocal last_sent_transcript
