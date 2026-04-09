@@ -510,13 +510,44 @@ function App() {
       return { total, breakdown };
     };
 
+    const normalizeForMatch = (text) => (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+    const mergeTranscriptChunk = (previousText, incomingText) => {
+      const prev = (previousText || "").trim();
+      const next = (incomingText || "").trim();
+      if (!next) return prev;
+      if (!prev) return next;
+
+      const prevNorm = normalizeForMatch(prev);
+      const nextNorm = normalizeForMatch(next);
+
+      if (nextNorm === prevNorm) return prev;
+      if (nextNorm.startsWith(prevNorm)) return next;
+      if (prevNorm.startsWith(nextNorm)) return prev;
+
+      // If the new chunk is already mostly contained in the previous transcript, skip it.
+      if (prevNorm.includes(nextNorm) && nextNorm.length > 20) return prev;
+
+      // Suffix-prefix overlap merge to avoid repeated chunks.
+      const maxOverlap = Math.min(prevNorm.length, nextNorm.length);
+      let overlap = 0;
+      for (let size = maxOverlap; size >= 15; size -= 1) {
+        if (prevNorm.slice(-size) === nextNorm.slice(0, size)) {
+          overlap = size;
+          break;
+        }
+      }
+
+      if (overlap > 0) {
+        return `${prev} ${next.slice(overlap).trim()}`.replace(/\s+/g, " ").trim();
+      }
+      return `${prev} ${next}`.replace(/\s+/g, " ").trim();
+    };
+
     ws.onmessage = (event) => {
       const newText = event.data.trim();
       if (!newText) return;
-      const prev = fullTranscriptRef.current;
-      const mergedText = !prev
-        ? newText
-        : (newText.startsWith(prev) ? newText : `${prev} ${newText}`.trim());
+      const mergedText = mergeTranscriptChunk(fullTranscriptRef.current, newText);
 
       fullTranscriptRef.current = mergedText;
       setFullTranscript(mergedText);
@@ -533,8 +564,8 @@ function App() {
     recorder.ondataavailable = (event) => {
       if (event.data.size < 100) return;
       chunksRef.current.push(event.data);
-      // Send accumulated blob with header every time (chunk 0 has the header)
-      const blob = new Blob(chunksRef.current, { type: mimeType });
+      // Send only the latest chunk; full accumulation can cause repeated transcriptions.
+      const blob = event.data;
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(blob);
       }
