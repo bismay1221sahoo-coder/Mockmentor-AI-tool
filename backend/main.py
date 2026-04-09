@@ -923,8 +923,38 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     session_id = uuid.uuid4().hex[:8]
     print(f"[WS] Connected: {session_id}")
+    last_sent_transcript = ""
+
+    def extract_incremental_text(previous_text: str, current_text: str):
+        prev = (previous_text or "").strip()
+        cur = (current_text or "").strip()
+        if not cur:
+            return "", prev
+        if not prev:
+            return cur, cur
+
+        prev_words = prev.split()
+        cur_words = cur.split()
+        max_prefix = min(len(prev_words), len(cur_words))
+        common = 0
+        while common < max_prefix and prev_words[common].lower() == cur_words[common].lower():
+            common += 1
+
+        if common == len(cur_words):
+            return "", prev
+
+        if common > 0:
+            incremental = " ".join(cur_words[common:]).strip()
+            return incremental, cur
+
+        # If whisper rephrases heavily, avoid repeating entire transcript.
+        # Send only when the new text is substantially different and longer.
+        if len(cur_words) > len(prev_words) + 3:
+            return cur, cur
+        return "", prev
 
     async def transcribe_and_send(data: bytes, idx: int):
+        nonlocal last_sent_transcript
         fname = f"audio_{session_id}_{idx}.webm"
         try:
             with open(fname, "wb") as f:
@@ -942,7 +972,10 @@ async def websocket_endpoint(websocket: WebSocket):
             text = result.text.strip()
             print(f"[WS] [{idx}] {len(data)}b -> {text!r}")
             if text and websocket.client_state.name != "DISCONNECTED":
-                await websocket.send_text(text)
+                incremental, updated = extract_incremental_text(last_sent_transcript, text)
+                if incremental:
+                    await websocket.send_text(incremental)
+                last_sent_transcript = updated
         except Exception as e:
             print(f"[WS] [{idx}] Error: {e}")
         finally:
