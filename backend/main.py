@@ -5,6 +5,7 @@ from email.message import EmailMessage
 import json
 import os
 import random
+import re
 import smtplib
 import sqlite3
 import ssl
@@ -236,6 +237,72 @@ def is_behavioral_question(question: str):
         "when you had to",
     ]
     return any(t in q for t in triggers)
+
+
+def sanitize_transcript_for_eval(transcript: str):
+    text = " ".join((transcript or "").split()).strip()
+    if not text:
+        return ""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", text) if p.strip()]
+    deduped = []
+    for sentence in parts:
+        norm = re.sub(r"[^a-z0-9 ]", "", sentence.lower()).strip()
+        if not norm:
+            continue
+        duplicate = False
+        for prev in deduped[-3:]:
+            prev_norm = re.sub(r"[^a-z0-9 ]", "", prev.lower()).strip()
+            if prev_norm and SequenceMatcher(None, prev_norm, norm).ratio() >= 0.92:
+                duplicate = True
+                break
+        if not duplicate:
+            deduped.append(sentence)
+    cleaned = " ".join(deduped).strip()
+    return cleaned or text
+
+
+def heuristic_quality_score(question: str, transcript: str):
+    text = (transcript or "").strip()
+    if not text:
+        return 0
+    words = [w for w in re.findall(r"[A-Za-z']+", text)]
+    word_count = len(words)
+    if word_count < 8:
+        return 8
+
+    # Length quality
+    if word_count < 25:
+        length_score = 12
+    elif word_count < 50:
+        length_score = 22
+    elif word_count < 90:
+        length_score = 30
+    elif word_count <= 150:
+        length_score = 34
+    else:
+        length_score = 26
+
+    # Sentence quality
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    sentence_score = clamp_score(len(sentences) * 4, 8, 20)
+
+    # Relevance to question
+    stopwords = {
+        "the", "a", "an", "and", "or", "to", "of", "in", "for", "this", "that", "do", "you", "your",
+        "is", "are", "it", "on", "with", "why", "what", "how", "role", "want", "we", "our",
+    }
+    q_tokens = [t for t in re.findall(r"[a-z]+", (question or "").lower()) if t not in stopwords and len(t) > 2]
+    q_tokens = list(dict.fromkeys(q_tokens))
+    t_tokens = set(re.findall(r"[a-z]+", text.lower()))
+    overlap = sum(1 for t in q_tokens if t in t_tokens)
+    relevance_score = clamp_score(overlap * 5, 8, 20) if q_tokens else 14
+
+    # Clarity / repetition
+    unique_ratio = len(set(w.lower() for w in words)) / max(1, word_count)
+    clarity_score = clamp_score(int(round(unique_ratio * 25)), 8, 16)
+
+    total = length_score + sentence_score + relevance_score + clarity_score
+    return clamp_score(total, 0, 100)
 
 
 def generate_otp_code():
@@ -812,11 +879,12 @@ async def reset_sessions(user_id: int = Depends(get_current_user)):
 async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
     question = data.get("question", "")
     transcript = data.get("transcript", "")
+    cleaned_transcript = sanitize_transcript_for_eval(transcript)
     eye_contact = data.get("eye_contact", 0)
     filler_count = data.get("filler_count", 0)
     wpm = data.get("wpm", 0)
 
-    if not transcript or len(transcript.strip()) < 10:
+    if not cleaned_transcript or len(cleaned_transcript.strip()) < 10:
         return {
             "error": "No answer detected",
             "overall_feedback": "No answer was provided. Please speak clearly into the microphone.",
@@ -832,7 +900,7 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
             )
             past_rows = c.fetchall()
 
-        normalized_current = " ".join(transcript.lower().split())
+        normalized_current = " ".join(cleaned_transcript.lower().split())
         best_similarity = 0.0
         for old_transcript, old_question in past_rows:
             previous = " ".join((old_transcript or "").lower().split())
@@ -853,7 +921,7 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Question: {question}\n\nAnswer: {transcript}"},
+                {"role": "user", "content": f"Question: {question}\n\nAnswer: {cleaned_transcript}"},
             ],
             temperature=0.3,
         )
@@ -907,8 +975,15 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
         result["task_score"] = section_scores[1]
         result["action_score"] = section_scores[2]
         result["result_score"] = section_scores[3]
-        result["total_score"] = total_score
-        result["grade"] = score_to_grade(total_score)
+
+        # Blend model score with deterministic quality signal for stable grading.
+        heuristic_score = heuristic_quality_score(question, cleaned_transcript)
+        blended_score = clamp_score(int(round(total_score * 0.72 + heuristic_score * 0.28)), 0, 100)
+        if not is_behavioral_question(question) and heuristic_score >= 65 and blended_score < 65:
+            blended_score = 65
+
+        result["total_score"] = blended_score
+        result["grade"] = score_to_grade(blended_score)
 
         result["eye_contact"] = round(eye_contact, 1)
         result["filler_count"] = filler_count
@@ -935,7 +1010,7 @@ async def evaluate_answer(data: dict, user_id: int = Depends(get_current_user)):
                     wpm,
                     filler_count,
                     question,
-                    transcript,
+                    cleaned_transcript,
                     result.get("overall_feedback", ""),
                 ),
             )
