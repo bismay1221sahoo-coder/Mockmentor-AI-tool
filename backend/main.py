@@ -74,6 +74,9 @@ app.add_middleware(
 
 # In-memory rate limit store: {bucket: {key: {"hits": deque[timestamp], "blocked_until": datetime|None}}}
 RATE_LIMIT_STORE = defaultdict(dict)
+PASSWORD_POLICY_MESSAGE = (
+    "Password must be at least 8 characters and include uppercase, lowercase, number, and special character."
+)
 
 QUESTION_PACKS = {
     "General": {
@@ -309,6 +312,20 @@ def generate_otp_code():
     return "".join(random.choice(string.digits) for _ in range(6))
 
 
+def validate_new_password(password: str):
+    value = password or ""
+    if len(value) < 8:
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+    if not re.search(r"[A-Z]", value):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+    if not re.search(r"[a-z]", value):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+    if not re.search(r"\d", value):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+    if not re.search(r"[^A-Za-z0-9]", value):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+
+
 def send_reset_otp_email(recipient_email: str, otp: str):
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS or not SMTP_FROM:
         return False, "SMTP is not configured"
@@ -465,6 +482,7 @@ def parse_session_date(raw_date: str):
 
 @app.post("/register")
 async def register(user: UserRegister):
+    validate_new_password(user.password)
     with sqlite3.connect("sessions.db") as conn:
         c = conn.cursor()
         c.execute("SELECT id FROM users WHERE email = ?", (user.email,))
@@ -485,30 +503,11 @@ async def register(user: UserRegister):
 
 
 @app.post("/forgot-password")
-async def forgot_password(data: dict, request: Request):
-    email = data.get("email", "").strip()
-    answer = data.get("security_answer", "").lower().strip()
-    new_password = data.get("new_password", "")
-    limited, retry_after = is_rate_limited(
-        bucket="legacy_reset",
-        key=client_key(request, email),
-        max_attempts=5,
-        window_seconds=600,
-        lock_seconds=900,
+async def forgot_password(_data: dict, _request: Request):
+    raise HTTPException(
+        status_code=410,
+        detail="Security-answer reset is deprecated. Use OTP endpoints: /forgot-password/request-otp and /forgot-password/verify-otp.",
     )
-    if limited:
-        raise HTTPException(status_code=429, detail=f"Too many reset attempts. Try again in {retry_after}s.")
-    with sqlite3.connect("sessions.db") as conn:
-        c = conn.cursor()
-        c.execute("SELECT id, security_answer FROM users WHERE email = ?", (email,))
-        row = c.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Email not found")
-        if row[1] != answer:
-            raise HTTPException(status_code=400, detail="Incorrect security answer")
-        c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(new_password), row[0]))
-        conn.commit()
-    return {"message": "Password reset successful"}
 
 
 @app.post("/forgot-password/request-otp")
@@ -564,6 +563,7 @@ async def verify_reset_otp(data: dict, request: Request):
     new_password = data.get("new_password", "")
     if not email or not otp or not new_password:
         raise HTTPException(status_code=400, detail="Email, OTP and new password are required")
+    validate_new_password(new_password)
 
     limited, retry_after = is_rate_limited(
         bucket="otp_verify",
@@ -608,14 +608,11 @@ async def verify_reset_otp(data: dict, request: Request):
 
 
 @app.get("/security-question")
-async def get_security_question(email: str):
-    with sqlite3.connect("sessions.db") as conn:
-        c = conn.cursor()
-        c.execute("SELECT security_question FROM users WHERE email = ?", (email,))
-        row = c.fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail="Email not found")
-    return {"security_question": row[0]}
+async def get_security_question(_email: str):
+    raise HTTPException(
+        status_code=410,
+        detail="Security-question recovery is disabled. Use OTP reset flow.",
+    )
 
 
 @app.post("/login", response_model=Token)
@@ -689,6 +686,7 @@ async def update_profile(data: UserUpdate, user_id: int = Depends(get_current_us
         if data.new_password:
             if not data.current_password or not verify_password(data.current_password, row[0]):
                 raise HTTPException(status_code=400, detail="Current password is incorrect")
+            validate_new_password(data.new_password)
             c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(data.new_password), user_id))
         conn.commit()
     return {"message": "Profile updated successfully"}
