@@ -42,6 +42,8 @@ SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 OTP_FROM_EMAIL = os.getenv("OTP_FROM_EMAIL", SMTP_FROM).strip()
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "").strip()
+BREVO_FROM_EMAIL = os.getenv("BREVO_FROM_EMAIL", OTP_FROM_EMAIL).strip()
 
 if APP_ENV == "production" and (not SECRET_KEY or SECRET_KEY == "supersecretkey_changeme"):
     raise RuntimeError("SECRET_KEY must be set to a strong value in production.")
@@ -344,6 +346,41 @@ def send_reset_otp_email(recipient_email: str, otp: str):
     ]
     email_text = "\n".join(body_lines)
 
+    # Preferred path: Brevo API (works without custom domain; verify sender email once).
+    if BREVO_API_KEY and BREVO_FROM_EMAIL:
+        payload = json.dumps(
+            {
+                "sender": {"email": BREVO_FROM_EMAIL, "name": "MockMentor AI"},
+                "to": [{"email": recipient_email}],
+                "subject": "MockMentor AI - Password Reset OTP",
+                "textContent": email_text,
+            }
+        ).encode("utf-8")
+        req = urllib_request.Request(
+            "https://api.brevo.com/v3/smtp/email",
+            data=payload,
+            headers={
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=20) as resp:
+                if 200 <= resp.status < 300:
+                    return True, ""
+                return False, f"Brevo returned status {resp.status}"
+        except urllib_error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            return False, f"Brevo HTTPError {e.code}: {err_body or e.reason}"
+        except Exception as e:
+            return False, f"Brevo error: {e}"
+
     # Preferred path: Resend HTTP API (no SMTP setup needed).
     if RESEND_API_KEY and OTP_FROM_EMAIL:
         payload = json.dumps(
@@ -541,11 +578,35 @@ async def register(user: UserRegister):
 
 
 @app.post("/forgot-password")
-async def forgot_password(_data: dict, _request: Request):
-    raise HTTPException(
-        status_code=410,
-        detail="Security-answer reset is deprecated. Use OTP endpoints: /forgot-password/request-otp and /forgot-password/verify-otp.",
+async def forgot_password(data: dict, request: Request):
+    email = data.get("email", "").strip().lower()
+    answer = data.get("security_answer", "").lower().strip()
+    new_password = data.get("new_password", "")
+    if not email or not answer or not new_password:
+        raise HTTPException(status_code=400, detail="Email, security answer and new password are required")
+    validate_new_password(new_password)
+
+    limited, retry_after = is_rate_limited(
+        bucket="legacy_reset",
+        key=client_key(request, email),
+        max_attempts=5,
+        window_seconds=600,
+        lock_seconds=900,
     )
+    if limited:
+        raise HTTPException(status_code=429, detail=f"Too many reset attempts. Try again in {retry_after}s.")
+    with sqlite3.connect("sessions.db") as conn:
+        c = conn.cursor()
+        c.execute("SELECT id, security_answer FROM users WHERE email = ?", (email,))
+        row = c.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Email not found")
+        saved_answer = (row[1] or "").lower().strip()
+        if saved_answer != answer:
+            raise HTTPException(status_code=400, detail="Incorrect security answer")
+        c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(new_password), row[0]))
+        conn.commit()
+    return {"message": "Password reset successful"}
 
 
 @app.post("/forgot-password/request-otp")
@@ -648,11 +709,18 @@ async def verify_reset_otp(data: dict, request: Request):
 
 
 @app.get("/security-question")
-async def get_security_question(_email: str):
-    raise HTTPException(
-        status_code=410,
-        detail="Security-question recovery is disabled. Use OTP reset flow.",
-    )
+async def get_security_question(email: str):
+    normalized_email = (email or "").strip().lower()
+    if not normalized_email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
+    with sqlite3.connect("sessions.db") as conn:
+        c = conn.cursor()
+        c.execute("SELECT security_question FROM users WHERE email = ?", (normalized_email,))
+        row = c.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return {"security_question": row[0]}
 
 
 @app.post("/login", response_model=Token)
