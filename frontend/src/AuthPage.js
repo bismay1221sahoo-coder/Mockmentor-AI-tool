@@ -87,6 +87,21 @@ const s = {
     transition: "border-color 0.2s, box-shadow 0.2s",
     boxSizing: "border-box",
   },
+  passwordWrap: { position: "relative" },
+  passwordInput: { paddingRight: 72 },
+  toggleBtn: {
+    position: "absolute",
+    right: 10,
+    top: "50%",
+    transform: "translateY(-50%)",
+    border: "none",
+    background: "transparent",
+    color: "#c4b5fd",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    padding: "4px 6px",
+  },
   select: {
     width: "100%", padding: "12px 14px", borderRadius: 10,
     border: "1px solid rgba(255,255,255,0.08)",
@@ -132,6 +147,9 @@ export default function AuthPage({ onLogin }) {
   const [forgot, setForgot] = useState({ email: "", otp: "", new_password: "", dev_otp: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const isOk = error.startsWith("OK:");
 
@@ -231,7 +249,21 @@ export default function AuthPage({ onLogin }) {
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>Password</label>
-                  <input style={s.input} type="password" placeholder="********" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+                  <div style={s.passwordWrap}>
+                    <input
+                      style={{ ...s.input, ...s.passwordInput }}
+                      type={showLoginPassword ? "text" : "password"}
+                      placeholder="********"
+                      value={form.password}
+                      onChange={e => setForm({ ...form, password: e.target.value })}
+                      required
+                    />
+                    {form.password && (
+                      <button type="button" style={s.toggleBtn} onClick={() => setShowLoginPassword((v) => !v)}>
+                        {showLoginPassword ? "Hide" : "Show"}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {error && <div style={s.error(isOk)}>{error}</div>}
                 <motion.button type="submit" style={{ ...s.btn, opacity: loading ? 0.6 : 1 }} disabled={loading} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}>
@@ -252,7 +284,25 @@ export default function AuthPage({ onLogin }) {
                 ].map(f => (
                   <div key={f.key} style={s.field}>
                     <label style={s.label}>{f.label}</label>
-                    <input style={s.input} type={f.type} placeholder={f.ph} value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} required />
+                    {f.key === "password" ? (
+                      <div style={s.passwordWrap}>
+                        <input
+                          style={{ ...s.input, ...s.passwordInput }}
+                          type={showSignupPassword ? "text" : "password"}
+                          placeholder={f.ph}
+                          value={form[f.key]}
+                          onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                          required
+                        />
+                        {form.password && (
+                          <button type="button" style={s.toggleBtn} onClick={() => setShowSignupPassword((v) => !v)}>
+                            {showSignupPassword ? "Hide" : "Show"}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <input style={s.input} type={f.type} placeholder={f.ph} value={form[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} required />
+                    )}
                   </div>
                 ))}
                 <div style={s.field}>
@@ -305,7 +355,21 @@ export default function AuthPage({ onLogin }) {
                 </div>
                 <div style={s.field}>
                   <label style={s.label}>New Password</label>
-                  <input style={s.input} type="password" placeholder="********" value={forgot.new_password} onChange={e => setForgot({ ...forgot, new_password: e.target.value })} required />
+                  <div style={s.passwordWrap}>
+                    <input
+                      style={{ ...s.input, ...s.passwordInput }}
+                      type={showResetPassword ? "text" : "password"}
+                      placeholder="********"
+                      value={forgot.new_password}
+                      onChange={e => setForgot({ ...forgot, new_password: e.target.value })}
+                      required
+                    />
+                    {forgot.new_password && (
+                      <button type="button" style={s.toggleBtn} onClick={() => setShowResetPassword((v) => !v)}>
+                        {showResetPassword ? "Hide" : "Show"}
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontSize: 11, color: "#8b8bb1", marginTop: -4, marginBottom: 10, lineHeight: 1.4 }}>
                   Use 8+ chars with uppercase, lowercase, number, and special character.

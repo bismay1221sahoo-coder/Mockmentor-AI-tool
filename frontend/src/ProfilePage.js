@@ -21,6 +21,21 @@ const inputStyle = {
   color: "#f0f0ff", fontSize: 14, outline: "none",
   boxSizing: "border-box", transition: "border-color 0.2s",
 };
+const passwordWrapStyle = { position: "relative" };
+const toggleBtnStyle = {
+  position: "absolute",
+  right: 10,
+  top: "50%",
+  transform: "translateY(-50%)",
+  border: "none",
+  background: "transparent",
+  color: "#c4b5fd",
+  fontSize: 12,
+  fontWeight: 700,
+  cursor: "pointer",
+  padding: "4px 6px",
+};
+const passwordInputStyle = { ...inputStyle, paddingRight: 72 };
 
 export default function ProfilePage({ token, onBack, onLogout }) {
   const [profile, setProfile] = useState(null);
@@ -29,6 +44,8 @@ export default function ProfilePage({ token, onBack, onLogout }) {
   const [newPwd, setNewPwd] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+  const [showNewPwd, setShowNewPwd] = useState(false);
 
   useEffect(() => {
     fetch(`${BASE}/profile`, { headers: { Authorization: `Bearer ${token}` } })
@@ -158,14 +175,27 @@ export default function ProfilePage({ token, onBack, onLogout }) {
             <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 14, marginTop: 4 }}>
               <div style={{ fontSize: 11, color: "#6b6b8a", marginBottom: 14, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.5 }}>Change Password</div>
               {[
-                { label: "Current Password", val: currentPwd, set: setCurrentPwd, ph: "Enter current password" },
-                { label: "New Password", val: newPwd, set: setNewPwd, ph: "Leave blank to keep same" },
+                { label: "Current Password", val: currentPwd, set: setCurrentPwd, ph: "Enter current password", show: showCurrentPwd, toggle: setShowCurrentPwd },
+                { label: "New Password", val: newPwd, set: setNewPwd, ph: "Leave blank to keep same", show: showNewPwd, toggle: setShowNewPwd },
               ].map(f => (
                 <div key={f.label} style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 11, color: "#6b6b8a", marginBottom: 6, fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.5 }}>{f.label}</div>
-                  <input style={inputStyle} type="password" placeholder={f.ph} value={f.val} onChange={e => f.set(e.target.value)}
-                    onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
-                    onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"} />
+                  <div style={passwordWrapStyle}>
+                    <input
+                      style={passwordInputStyle}
+                      type={f.show ? "text" : "password"}
+                      placeholder={f.ph}
+                      value={f.val}
+                      onChange={e => f.set(e.target.value)}
+                      onFocus={e => e.target.style.borderColor = "rgba(124,58,237,0.5)"}
+                      onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.08)"}
+                    />
+                    {f.val && (
+                      <button type="button" style={toggleBtnStyle} onClick={() => f.toggle((v) => !v)}>
+                        {f.show ? "Hide" : "Show"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
