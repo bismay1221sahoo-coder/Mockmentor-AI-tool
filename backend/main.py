@@ -11,6 +11,8 @@ import sqlite3
 import ssl
 import string
 import types
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 import bcrypt
 from dotenv import load_dotenv
@@ -38,6 +40,8 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+OTP_FROM_EMAIL = os.getenv("OTP_FROM_EMAIL", SMTP_FROM).strip()
 
 if APP_ENV == "production" and (not SECRET_KEY or SECRET_KEY == "supersecretkey_changeme"):
     raise RuntimeError("SECRET_KEY must be set to a strong value in production.")
@@ -327,28 +331,62 @@ def validate_new_password(password: str):
 
 
 def send_reset_otp_email(recipient_email: str, otp: str):
+    body_lines = [
+        "Hi,",
+        "",
+        f"Your MockMentor AI password reset OTP is: {otp}",
+        "It is valid for 10 minutes.",
+        "",
+        "If you did not request this, you can ignore this email.",
+        "",
+        "Regards,",
+        "MockMentor AI",
+    ]
+    email_text = "\n".join(body_lines)
+
+    # Preferred path: Resend HTTP API (no SMTP setup needed).
+    if RESEND_API_KEY and OTP_FROM_EMAIL:
+        payload = json.dumps(
+            {
+                "from": OTP_FROM_EMAIL,
+                "to": [recipient_email],
+                "subject": "MockMentor AI - Password Reset OTP",
+                "text": email_text,
+            }
+        ).encode("utf-8")
+        req = urllib_request.Request(
+            "https://api.resend.com/emails",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=20) as resp:
+                if 200 <= resp.status < 300:
+                    return True, ""
+                return False, f"Resend returned status {resp.status}"
+        except urllib_error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="ignore")
+            except Exception:
+                pass
+            return False, f"Resend HTTPError {e.code}: {err_body or e.reason}"
+        except Exception as e:
+            return False, f"Resend error: {e}"
+
+    # Fallback path: SMTP.
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS or not SMTP_FROM:
-        return False, "SMTP is not configured"
+        return False, "Neither Resend API nor SMTP is configured"
 
     msg = EmailMessage()
     msg["Subject"] = "MockMentor AI - Password Reset OTP"
     msg["From"] = SMTP_FROM
     msg["To"] = recipient_email
-    msg.set_content(
-        "\n".join(
-            [
-                "Hi,",
-                "",
-                f"Your MockMentor AI password reset OTP is: {otp}",
-                "It is valid for 10 minutes.",
-                "",
-                "If you did not request this, you can ignore this email.",
-                "",
-                "Regards,",
-                "MockMentor AI",
-            ]
-        )
-    )
+    msg.set_content(email_text)
 
     context = ssl.create_default_context()
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
@@ -546,14 +584,16 @@ async def request_reset_otp(data: dict, request: Request):
         send_error = str(e)
     if not sent:
         print(f"[OTP] Email send failed for {email}: {send_error}")
-        if APP_ENV == "production":
-            raise HTTPException(status_code=500, detail="Failed to send OTP email. Please try another way.")
         print(f"[OTP] Dev fallback OTP for {email}: {otp}")
 
-    payload = {"message": "OTP sent successfully. Check your email.", "expires_in_minutes": 10}
-    if APP_ENV != "production" or not sent:
-        payload["dev_otp"] = otp
-    return payload
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send OTP email. Please try again.")
+
+    return {
+        "message": "OTP sent successfully. Check your email.",
+        "expires_in_minutes": 10,
+        "email_sent": True,
+    }
 
 
 @app.post("/forgot-password/verify-otp")
